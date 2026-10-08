@@ -17,13 +17,17 @@ extension ServiceMixin {
         return response.body
     }
 
-    @AIProxyActor func makeRequestAndDeserializeResponseWithMetadata<T: Decodable & Sendable>(_ request: URLRequest) async throws -> AIProxyResponseWithHeaders<T> {
+    @AIProxyActor func makeRequestAndDeserializeResponseWithMetadata<T: Decodable & Sendable>(
+        _ request: URLRequest,
+        preservingHTTPErrorMetadata: Bool = false
+    ) async throws -> AIProxyResponseWithHeaders<T> {
         if AIProxy.printRequestBodies {
             printRequestBody(request)
         }
         let (data, httpResponse) = try await BackgroundNetworker.makeRequestAndWaitForData(
             self.urlSession,
-            request
+            request,
+            preservingHTTPErrorMetadata: preservingHTTPErrorMetadata
         )
         if AIProxy.printResponseBodies {
             printBufferedResponseBody(data)

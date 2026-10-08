@@ -29,3 +29,17 @@ nonisolated public struct AIProxyChunkStreamResponse<Chunk: Sendable>: Sendable 
         self.stream = stream
     }
 }
+
+/// An HTTP failure returned by metadata-preserving response retrieval.
+/// Header field names should be compared case-insensitively.
+nonisolated public struct AIProxyHTTPError: Error, Sendable {
+    public let statusCode: Int
+    public let responseBody: String
+    public let headers: [String: String]
+
+    public init(statusCode: Int, responseBody: String, headers: [String: String]) {
+        self.statusCode = statusCode
+        self.responseBody = responseBody
+        self.headers = headers
+    }
+}

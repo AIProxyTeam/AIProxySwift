@@ -8,11 +8,12 @@ import Foundation
 
 struct BackgroundNetworker {
 
-    /// Throws AIProxyError.unsuccessfulRequest if the returned status code is non-200
+    /// Throws for HTTP status codes of 300 or greater; metadata preservation is opt-in.
     @AIProxyActor static func makeRequestAndWaitForData(
         _ session: URLSession,
         _ request: URLRequest,
-        _ progressCallback: (@Sendable (Double) -> Void)? = nil
+        _ progressCallback: (@Sendable (Double) -> Void)? = nil,
+        preservingHTTPErrorMetadata: Bool = false
     ) async throws -> (Data, HTTPURLResponse) {
         if let progressCallback {
             (session.delegate as? AIProxyCertificatePinningDelegate)?.progressCallback = progressCallback
@@ -26,6 +27,13 @@ struct BackgroundNetworker {
         }
         if httpResponse.statusCode > 299 {
             logIf(.error)?.error("Receieved a non-200 status code: \(httpResponse.statusCode)")
+            if preservingHTTPErrorMetadata {
+                throw AIProxyHTTPError(
+                    statusCode: httpResponse.statusCode,
+                    responseBody: String(data: data, encoding: .utf8) ?? "",
+                    headers: httpResponse.readableHeaders
+                )
+            }
             throw AIProxyError.unsuccessfulRequest(
                 statusCode: httpResponse.statusCode,
                 responseBody: String(data: data, encoding: .utf8) ?? ""

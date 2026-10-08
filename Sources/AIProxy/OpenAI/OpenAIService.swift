@@ -346,6 +346,78 @@ import Foundation
         return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
     }
 
+    /// Retrieves one current response snapshot. The caller owns polling and retries.
+    ///
+    /// - Parameters:
+    ///   - responseID: The known provider response ID, encoded as one path segment.
+    ///   - include: Additional output data to include, in the supplied order.
+    ///   - secondsToWait: The amount of time to wait before `URLError.timedOut` is raised.
+    ///   - additionalHeaders: Optional headers alongside the library's default headers.
+    /// - Throws: `AIProxyError.unsuccessfulRequest` for HTTP status codes of 300 or greater.
+    public func getResponse(
+        responseID: String,
+        include: [OpenAIInclude]? = nil,
+        secondsToWait: UInt,
+        additionalHeaders: [String: String] = [:]
+    ) async throws -> OpenAIResponse {
+        do {
+            return try await self.getResponseWithMetadata(
+                responseID: responseID,
+                include: include,
+                secondsToWait: secondsToWait,
+                additionalHeaders: additionalHeaders
+            ).body
+        } catch let error as AIProxyHTTPError {
+            throw AIProxyError.unsuccessfulRequest(
+                statusCode: error.statusCode,
+                responseBody: error.responseBody
+            )
+        }
+    }
+
+    /// Retrieves one current response snapshot with its HTTP response headers.
+    /// The caller owns polling and retries. Failed or incomplete generation remains response data.
+    ///
+    /// - Parameters:
+    ///   - responseID: The known provider response ID, encoded as one path segment.
+    ///   - include: Additional output data to include, in the supplied order.
+    ///   - secondsToWait: The amount of time to wait before `URLError.timedOut` is raised.
+    ///   - additionalHeaders: Optional headers alongside the library's default headers.
+    /// - Throws: `AIProxyHTTPError` with body and headers for HTTP status codes of 300 or greater.
+    public func getResponseWithMetadata(
+        responseID: String,
+        include: [OpenAIInclude]? = nil,
+        secondsToWait: UInt,
+        additionalHeaders: [String: String] = [:]
+    ) async throws -> AIProxyResponseWithHeaders<OpenAIResponse> {
+        guard !responseID.isEmpty, responseID != ".", responseID != ".." else {
+            throw AIProxyError.assertion("Response IDs must not be empty or dot path segments")
+        }
+        // Only unreserved characters may remain literal in an opaque path segment.
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        guard let encodedID = responseID.addingPercentEncoding(withAllowedCharacters: allowed),
+              var components = URLComponents(string: self.resolvedPath("responses/\(encodedID)")) else {
+            throw AIProxyError.assertion("Response IDs must be URL encodable")
+        }
+        if let include, !include.isEmpty {
+            components.queryItems = (components.queryItems ?? []) + include.map {
+                URLQueryItem(name: "include[]", value: $0.rawValue)
+            }
+        }
+        guard let path = components.string else {
+            throw AIProxyError.assertion("Could not create a response retrieval path")
+        }
+        let request = try await self.requestBuilder.plainGET(
+            path: path,
+            secondsToWait: secondsToWait,
+            additionalHeaders: additionalHeaders
+        )
+        return try await self.serviceNetworker.makeRequestAndDeserializeResponseWithMetadata(
+            request,
+            preservingHTTPErrorMetadata: true
+        )
+    }
+
     /// Creates a streaming 'response' using OpenAI's new API product:
     /// https://platform.openai.com/docs/api-reference/responses/streaming
     ///

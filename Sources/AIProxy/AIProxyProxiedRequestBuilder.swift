@@ -13,6 +13,19 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
     let partialKey: String
     let serviceURL: String?
     let clientID: String?
+    private let deviceCheckTokenProvider: (@AIProxyActor @Sendable (String?) async -> String?)?
+
+    nonisolated init(
+        partialKey: String,
+        serviceURL: String?,
+        clientID: String?,
+        deviceCheckTokenProvider: (@AIProxyActor @Sendable (String?) async -> String?)? = nil
+    ) {
+        self.partialKey = partialKey
+        self.serviceURL = serviceURL
+        self.clientID = clientID
+        self.deviceCheckTokenProvider = deviceCheckTokenProvider
+    }
 
     func jsonPOST(
         path: String,
@@ -34,7 +47,8 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
             verb: .post,
             secondsToWait: secondsToWait,
             contentType: "application/json",
-            additionalHeaders: additionalHeaders
+            additionalHeaders: additionalHeaders,
+            deviceCheckTokenProvider: self.deviceCheckTokenProvider
         )
     }
 
@@ -59,7 +73,8 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
             verb: .post,
             secondsToWait: secondsToWait,
             contentType: "multipart/form-data; boundary=\(boundary)",
-            additionalHeaders: additionalHeaders
+            additionalHeaders: additionalHeaders,
+            deviceCheckTokenProvider: self.deviceCheckTokenProvider
         )
     }
 
@@ -81,7 +96,8 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
             body: nil,
             verb: .get,
             secondsToWait: secondsToWait,
-            additionalHeaders: additionalHeaders
+            additionalHeaders: additionalHeaders,
+            deviceCheckTokenProvider: self.deviceCheckTokenProvider
         )
     }
 
@@ -103,7 +119,8 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
             body: nil,
             verb: .delete,
             secondsToWait: secondsToWait,
-            additionalHeaders: additionalHeaders
+            additionalHeaders: additionalHeaders,
+            deviceCheckTokenProvider: self.deviceCheckTokenProvider
         )
     }
 }

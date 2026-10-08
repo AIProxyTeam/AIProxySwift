@@ -1509,6 +1509,88 @@ Note: there is also a streaming version of this snippet below.
     }
 ```
 
+### How to create and retrieve an OpenAI background response
+
+Set `background: true` to opt into background generation. Retain the provider's
+response ID when creation returns, or when a streaming `responseCreated` event
+arrives. Later, retrieve one snapshot with `getResponse` or
+`getResponseWithMetadata`. Your code decides when to poll and where to keep the ID.
+
+```swift
+import AIProxy
+
+func startBackgroundResponse(service: OpenAIService, model: String) async throws -> String {
+    let response = try await service.createResponse(
+        requestBody: OpenAICreateResponseRequestBody(
+            background: true,
+            input: .text("Explain how a solar eclipse occurs."),
+            model: model,
+            store: true
+        ),
+        secondsToWait: 60
+    )
+    guard let responseID = response.id else {
+        throw AIProxyError.assertion("Creation returned no response ID")
+    }
+    return responseID // The caller can persist this ID before returning.
+}
+
+func inspectBackgroundResponse(service: OpenAIService, responseID: String) async throws {
+    let result = try await service.getResponseWithMetadata(
+        responseID: responseID,
+        secondsToWait: 30
+    )
+    switch result.body.status {
+    case .queued, .inProgress:
+        print("Still running") // The caller can schedule another GET later.
+    case .completed:
+        print(result.body.outputText)
+    case .failed:
+        print(result.body.error?.code ?? "", result.body.error?.message ?? "")
+    case .incomplete:
+        print(result.body.incompleteDetails?.reason ?? "Incomplete response")
+    case .cancelled:
+        print("Cancelled")
+    case nil:
+        print("Status was not supplied")
+    }
+}
+```
+
+Use the same request body with `createStreamingResponse` for initial streaming;
+that method sets `stream` to true. Retrieval here returns a snapshot, with no
+automatic polling, retries, creation replay, provider cancellation or stream
+resumption. A local task cancellation stops that GET.
+
+`getResponseWithMetadata` exposes success headers and throws `AIProxyHTTPError`
+with `statusCode`, `responseBody` and `headers` for HTTP failures. Header lookup
+should be case-insensitive. `getResponse` keeps the SDK's
+`AIProxyError.unsuccessfulRequest(statusCode:responseBody:)` error contract. An HTTP
+200 response with `status: failed` returns response data; inspect its public error
+fields separately from HTTP errors.
+
+Recovery requires an accepted response ID and retained data. Ordinary stored
+responses are also retrievable without background mode. The example selects
+`store: true`; the SDK preserves omitted and explicit `background`/`store` choices.
+Retention depends on project policy: background requests can use temporary storage,
+including roughly ten minutes under Zero Data Retention; Modified Abuse Monitoring
+requires explicit `store: true` for retention beyond the polling period. Background
+mode can increase time to first token. Consult OpenAI's current
+[background guide](https://developers.openai.com/api/docs/guides/background).
+
+Direct and proxied services use their existing request builders and sessions.
+Standard, unversioned and Azure request formats are supported for URL construction;
+model, project and production proxy availability must be validated separately.
+
+Compatibility notes: `OpenAIResponse.Status` adds `queued` and `cancelled`, so
+exhaustive switches may need these cases. Existing initializer calls and typed
+initializer references remain supported. The shared URL helper now preserves
+escaped path data, including in custom base prefixes: `a%2Fb`, `%41` and `%7E` stay
+encoded instead of becoming `a/b`, `A` and `~`. Ordinary unescaped routes retain
+their format. Custom routes or signatures relying on the old decoded URL need to
+use the corrected final URL. Supply a raw response ID to retrieval; it is encoded
+as one path segment by the SDK.
+
 ### How to make a tool call request with OpenAI's Responses API
 
 ```swift
