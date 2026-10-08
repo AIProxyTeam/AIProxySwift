@@ -337,7 +337,7 @@ struct ResponseHTTPFailure: Sendable {
     let headers: [String: String]
 }
 
-private let responseHTTPFailures: [ResponseHTTPFailure] = [
+let responseHTTPFailures: [ResponseHTTPFailure] = [
     .init(status: 300, data: Data("multiple choices".utf8), text: "multiple choices", headers: ["X-Request-ID": "req300"]),
     .init(status: 302, data: Data("redirect body\r\n".utf8), text: "redirect body\r\n", headers: ["X-Request-ID": "req302", "Retry-After": "7"]),
     .init(status: 400, data: Data(#"{"error":{"message":"fixture bad request"}}"#.utf8), text: #"{"error":{"message":"fixture bad request"}}"#, headers: ["X-Request-ID": "req400"]),
@@ -349,7 +349,7 @@ private let responseHTTPFailures: [ResponseHTTPFailure] = [
     .init(status: 503, data: Data("unavailable: non-JSON body".utf8), text: "unavailable: non-JSON body", headers: ["X-Request-ID": "req503", "Retry-After": "3"])
 ]
 
-private func expectHTTPError(_ error: AIProxyHTTPError, status: Int, data: Data, text: String, headers: [String: String]) {
+func expectHTTPError(_ error: AIProxyHTTPError, status: Int, data: Data, text: String, headers: [String: String]) {
     #expect(error.statusCode == status)
     #expect(error.responseData == data)
     #expect(error.responseBody == text)
@@ -365,21 +365,7 @@ private func responseHeader(_ name: String, in headers: [String: String]) -> Str
 }
 
 private func responseRequestJSON(_ request: URLRequest) throws -> [String: Any] {
-    if let body = request.httpBody {
-        return try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
-    }
-    let stream = try #require(request.httpBodyStream)
-    stream.open()
-    defer { stream.close() }
-    var data = Data()
-    let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 4096)
-    defer { buffer.deallocate() }
-    while stream.hasBytesAvailable {
-        let count = stream.read(buffer, maxLength: 4096)
-        if count <= 0 { break }
-        data.append(buffer, count: count)
-    }
-    return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    try #require(JSONSerialization.jsonObject(with: controlledRequestBody(request)) as? [String: Any])
 }
 
 private let responseCompletedSnapshot = #"{"id":"resp_http_fixture","status":"completed","output":[],"usage":null}"#

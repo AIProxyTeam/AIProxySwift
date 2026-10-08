@@ -1,5 +1,6 @@
 #if DEBUG
 import Foundation
+import Testing
 @testable import AIProxy
 
 /// Bounded, event-driven synchronization for transport-start and cancellation assertions.
@@ -109,6 +110,7 @@ final class ControlledHTTPFixture: @unchecked Sendable {
     @AIProxyActor func makeOpenAIService(
         proxied: Bool,
         requestFormat: OpenAIRequestFormat = .standard,
+        session: URLSession? = nil,
         deviceCheckTokenProvider: @escaping @AIProxyActor @Sendable (String?) async -> String? = { _ in "fixture-device-token" }
     ) -> OpenAIService {
         let builder: any AIProxyRequestBuilder
@@ -128,9 +130,27 @@ final class ControlledHTTPFixture: @unchecked Sendable {
         return OpenAIService(
             requestFormat: requestFormat,
             requestBuilder: builder,
-            serviceNetworker: ControlledSessionNetworker(urlSession: makeSession(proxied: proxied))
+            serviceNetworker: ControlledSessionNetworker(urlSession: session ?? makeSession(proxied: proxied))
         )
     }
+}
+
+/// URLProtocol can capture a body as Data or as a stream, depending on Foundation's task path.
+func controlledRequestBody(_ request: URLRequest) throws -> Data {
+    if let body = request.httpBody { return body }
+    let stream = try #require(request.httpBodyStream)
+    stream.open()
+    defer { stream.close() }
+    var data = Data()
+    let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 4096)
+    defer { buffer.deallocate() }
+    while stream.hasBytesAvailable {
+        let count = stream.read(buffer, maxLength: 4096)
+        if count < 0 { throw stream.streamError ?? URLError(.cannotDecodeContentData) }
+        if count == 0 { break }
+        data.append(buffer, count: count)
+    }
+    return data
 }
 
 @AIProxyActor struct ControlledSessionNetworker: ServiceMixin {

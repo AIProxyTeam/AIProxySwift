@@ -34,38 +34,6 @@ extension ServiceMixin {
         )
     }
 
-    /// OpenAI Responses requests preserve HTTP failure bytes and headers.
-    @AIProxyActor func makeRequestAndDeserializeResponseWithHTTPMetadata<T: Decodable & Sendable>(
-        _ request: URLRequest
-    ) async throws -> AIProxyResponseWithHeaders<T> {
-        if AIProxy.printRequestBodies {
-            printRequestBody(request)
-        }
-        let session = self.urlSession
-        let (data, response) = try await session.data(
-            for: request,
-            delegate: session.delegate as? URLSessionTaskDelegate
-        )
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AIProxyError.assertion("Network response is not an http response")
-        }
-        if httpResponse.statusCode > 299 {
-            logIf(.error)?.error("Receieved a non-200 status code: \(httpResponse.statusCode)")
-            throw AIProxyHTTPError(
-                statusCode: httpResponse.statusCode,
-                responseData: data,
-                headers: httpResponse.readableHeaders
-            )
-        }
-        if AIProxy.printResponseBodies {
-            printBufferedResponseBody(data)
-        }
-        return AIProxyResponseWithHeaders(
-            body: try T.deserialize(from: data),
-            headers: httpResponse.readableHeaders
-        )
-    }
-
     @AIProxyActor func makeRequestAndDeserializeStreamingChunks<T: Decodable & Sendable>(_ request: URLRequest) async throws -> AsyncThrowingStream<T, Error> {
         if AIProxy.printRequestBodies {
             printRequestBody(request)
@@ -79,37 +47,7 @@ extension ServiceMixin {
         return self.decodeStreamingChunks(asyncBytes)
     }
 
-    /// OpenAI Responses streaming establishment preserves HTTP failure bytes and headers.
-    @AIProxyActor func makeRequestAndDeserializeStreamingChunksWithHTTPMetadata<T: Decodable & Sendable>(
-        _ request: URLRequest
-    ) async throws -> AsyncThrowingStream<T, Error> {
-        if AIProxy.printRequestBodies {
-            printRequestBody(request)
-        }
-
-        let session = self.urlSession
-        let (asyncBytes, response) = try await session.bytes(
-            for: request,
-            delegate: session.delegate as? URLSessionTaskDelegate
-        )
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AIProxyError.assertion("Network response is not an http response")
-        }
-        if httpResponse.statusCode > 299 {
-            var responseData = Data()
-            for try await byte in asyncBytes {
-                responseData.append(byte)
-            }
-            throw AIProxyHTTPError(
-                statusCode: httpResponse.statusCode,
-                responseData: responseData,
-                headers: httpResponse.readableHeaders
-            )
-        }
-        return self.decodeStreamingChunks(asyncBytes)
-    }
-
-    @AIProxyActor private func decodeStreamingChunks<T: Decodable & Sendable>(
+    @AIProxyActor func decodeStreamingChunks<T: Decodable & Sendable>(
         _ asyncBytes: URLSession.AsyncBytes
     ) -> AsyncThrowingStream<T, Error> {
         let sequence = asyncBytes.lines.compactMap { @AIProxyActor [shouldPrint = AIProxy.printResponseBodies] (line: String) -> T? in
@@ -215,7 +153,7 @@ private extension URLRequest {
     }
 }
 
-nonisolated private func printRequestBody(_ request: URLRequest) {
+nonisolated func printRequestBody(_ request: URLRequest) {
     logIf(.debug)?.debug(
         """
         Making a request to \(request.readableURL)
@@ -225,7 +163,7 @@ nonisolated private func printRequestBody(_ request: URLRequest) {
     )
 }
 
-nonisolated private func printBufferedResponseBody(_ data: Data) {
+nonisolated func printBufferedResponseBody(_ data: Data) {
     logIf(.debug)?.debug(
         """
         Received response body:

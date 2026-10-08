@@ -108,27 +108,29 @@ final class AIProxyURLRequestCompatibilityTests: XCTestCase {
         }
     }
 
-    func testOpenAIChatCompletionAndMistralKeepLegacyHTTPError() async throws {
+    func testMistralBufferedAndStreamingKeepLegacyHTTPError() async throws {
         for proxied in [false, true] {
-            for existingMethod in ["openai", "mistral"] {
-                let fixture = ControlledHTTPFixture(steps: [.http(statusCode: 429, body: Data("legacy failure\n".utf8), headers: ["Retry-After": "9"])])
+            for streaming in [false, true] {
+                let fixture = ControlledHTTPFixture(steps: [.http(statusCode: 429, body: Data("legacy failure\nfixture detail\n".utf8), headers: ["Retry-After": "9"])])
                 defer { fixture.invalidate() }
+                let builder = await Self.builder(baseURL: fixture.baseURL, proxied: proxied)
+                let service = MistralService(requestBuilder: builder, serviceNetworker: ControlledSessionNetworker(urlSession: fixture.makeSession(proxied: proxied)))
+                let body = MistralChatCompletionRequestBody(messages: [.user(content: "fixture-input")], model: "fixture-model")
                 do {
-                    if existingMethod == "openai" {
-                        let service = await fixture.makeOpenAIService(proxied: proxied)
-                        _ = try await service.chatCompletionRequest(body: .init(model: "fixture-model", messages: [.user(content: .text("fixture-input"))]), secondsToWait: 17)
+                    if streaming {
+                        _ = try await service.streamingChatCompletionRequest(body: body, secondsToWait: 17)
                     } else {
-                        let builder = await Self.builder(baseURL: fixture.baseURL, proxied: proxied)
-                        let service = MistralService(requestBuilder: builder, serviceNetworker: ControlledSessionNetworker(urlSession: fixture.makeSession(proxied: proxied)))
-                        _ = try await service.chatCompletionRequest(body: .init(messages: [.user(content: "fixture-input")], model: "fixture-model"), secondsToWait: 17)
+                        _ = try await service.chatCompletionRequest(body: body, secondsToWait: 17)
                     }
                     XCTFail("Expected legacy HTTP error")
                 } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
                     XCTAssertEqual(statusCode, 429)
-                    XCTAssertEqual(responseBody, "legacy failure\n")
+                    // The legacy streaming path concatenates lines without separators.
+                    XCTAssertEqual(responseBody, streaming ? "legacy failurefixture detail" : "legacy failure\nfixture detail\n")
                 } catch { XCTFail("Unexpected error: \(error)") }
                 XCTAssertEqual(fixture.requests.count, 1)
                 XCTAssertEqual(fixture.requests.first?.httpMethod, "POST")
+                XCTAssertEqual(fixture.requests.first?.url?.path, "/prefix/v1/chat/completions")
             }
         }
     }
