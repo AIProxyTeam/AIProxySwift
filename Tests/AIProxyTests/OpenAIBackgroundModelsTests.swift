@@ -65,52 +65,28 @@ final class OpenAIBackgroundModelsTests: XCTestCase {
         XCTAssertEqual(try encodedObject(OpenAICreateResponseRequestBody()).count, 0)
     }
 
-    func testExactLegacyInitializerFunctionReferenceStillCompiles() throws {
-        typealias LegacyInitializer = (
-            [OpenAIInclude]?,
-            OpenAIResponse.Input?,
-            String?,
-            Int?,
-            [OpenAICreateResponseRequestBody.ContextManagementItem]?,
-            String?,
-            Bool?,
-            String?,
-            OpenAICreateResponseRequestBody.Prompt?,
-            OpenAICreateResponseRequestBody.Reasoning?,
-            String?,
-            Bool?,
-            Bool?,
-            Double?,
-            OpenAIResponse.TextConfiguration?,
-            OpenAICreateResponseRequestBody.ToolChoice?,
-            [OpenAICreateResponseRequestBody.Tool]?,
-            Double?,
-            OpenAICreateResponseRequestBody.Truncation?,
-            String?
-        ) -> OpenAICreateResponseRequestBody
-
-        let initialize: LegacyInitializer = OpenAICreateResponseRequestBody.init
-        let request = initialize(
-            [.webSearchCallActionSources],
-            .text("Describe a triangle."),
-            "Answer briefly.",
-            128,
-            [.init(compactThreshold: 1000)],
-            "example-model",
-            false,
-            "resp_previous",
-            .init(id: "prompt_example"),
-            nil,
-            "example-safety-id",
-            false,
-            true,
-            0.5,
-            nil,
-            .auto,
-            [],
-            0.8,
-            .disabled,
-            "example-user"
+    func testExistingInitializerCallPreservesAllSuppliedRequestFields() throws {
+        let request = OpenAICreateResponseRequestBody(
+            include: [.webSearchCallActionSources],
+            input: .text("Describe a triangle."),
+            instructions: "Answer briefly.",
+            maxOutputTokens: 128,
+            contextManagement: [.init(compactThreshold: 1000)],
+            model: "example-model",
+            parallelToolCalls: false,
+            previousResponseId: "resp_previous",
+            prompt: .init(id: "prompt_example"),
+            reasoning: nil,
+            safetyIdentifier: "example-safety-id",
+            store: false,
+            stream: true,
+            temperature: 0.5,
+            text: nil,
+            toolChoice: .auto,
+            tools: [],
+            topP: 0.8,
+            truncation: .disabled,
+            user: "example-user"
         )
 
         let object = try encodedObject(request)

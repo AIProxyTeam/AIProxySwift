@@ -20,15 +20,36 @@ import Foundation
         verb: AIProxyHTTPVerb,
         secondsToWait: UInt,
         contentType: String? = nil,
-        additionalHeaders: [String: String] = [:],
-        deviceCheckTokenProvider: (@AIProxyActor @Sendable (String?) async -> String?)? = nil
+        additionalHeaders: [String: String] = [:]
     ) async throws -> URLRequest {
-        let resolvedClientID = await getResolvedClientID(clientID)
+        try await create(
+            builder: AIProxyProxiedRequestBuilder(partialKey: partialKey, serviceURL: serviceURL, clientID: clientID),
+            serviceURL: serviceURL,
+            proxyPath: proxyPath,
+            body: body,
+            verb: verb,
+            secondsToWait: secondsToWait,
+            contentType: contentType,
+            additionalHeaders: additionalHeaders
+        )
+    }
+
+    static func create(
+        builder: AIProxyProxiedRequestBuilder,
+        serviceURL: String,
+        proxyPath: String,
+        body: Data?,
+        verb: AIProxyHTTPVerb,
+        secondsToWait: UInt,
+        contentType: String? = nil,
+        additionalHeaders: [String: String] = [:]
+    ) async throws -> URLRequest {
+        let resolvedClientID = await getResolvedClientID(builder.clientID)
         var request = try URLRequest(serviceURL: serviceURL, proxyPath: proxyPath)
         request.networkServiceType = .avStreaming
         request.httpMethod = verb.toString(hasBody: body != nil)
         request.httpBody = body
-        request.addValue(partialKey, forHTTPHeaderField: "aiproxy-partial-key")
+        request.addValue(builder.partialKey, forHTTPHeaderField: "aiproxy-partial-key")
         request.addValue(resolvedClientID, forHTTPHeaderField: "aiproxy-client-id")
 
         request.addValue(
@@ -46,11 +67,15 @@ import Foundation
         }
         request.addValue(deviceCheckBypass, forHTTPHeaderField: "aiproxy-devicecheck-bypass")
     #else
-        let token = if let deviceCheckTokenProvider {
+        #if DEBUG
+        let token = if let deviceCheckTokenProvider = builder.deviceCheckTokenProvider {
             await deviceCheckTokenProvider(resolvedClientID)
         } else {
             await AIProxyDeviceCheck.getToken(forClient: resolvedClientID)
         }
+        #else
+        let token = await AIProxyDeviceCheck.getToken(forClient: resolvedClientID)
+        #endif
         guard let deviceCheckToken = token else {
             throw AIProxyError.deviceCheckIsUnavailable
         }

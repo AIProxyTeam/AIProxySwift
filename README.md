@@ -1513,8 +1513,8 @@ Note: there is also a streaming version of this snippet below.
 
 Set `background: true` to opt into background generation. Retain the provider's
 response ID when creation returns, or when a streaming `responseCreated` event
-arrives. Later, retrieve one snapshot with `getResponse` or
-`getResponseWithMetadata`. Your code decides when to poll and where to keep the ID.
+arrives. Later, retrieve one snapshot and its HTTP headers with `getResponse`.
+Your code decides when to poll and where to keep the ID.
 
 ```swift
 import AIProxy
@@ -1536,7 +1536,7 @@ func startBackgroundResponse(service: OpenAIService, model: String) async throws
 }
 
 func inspectBackgroundResponse(service: OpenAIService, responseID: String) async throws {
-    let result = try await service.getResponseWithMetadata(
+    let result = try await service.getResponse(
         responseID: responseID,
         secondsToWait: 30
     )
@@ -1562,9 +1562,9 @@ that method sets `stream` to true. Retrieval here returns a snapshot, with no
 automatic polling, retries, creation replay, provider cancellation or stream
 resumption. A local task cancellation stops that GET.
 
-`getResponseWithMetadata` exposes success headers and throws `AIProxyHTTPError`
+`getResponse` exposes success headers and throws `AIProxyHTTPError`
 with `statusCode`, `responseBody` and `headers` for HTTP failures. Header lookup
-should be case-insensitive. `getResponse` keeps the SDK's
+should be case-insensitive. Existing creation methods retain their
 `AIProxyError.unsuccessfulRequest(statusCode:responseBody:)` error contract. An HTTP
 200 response with `status: failed` returns response data; inspect its public error
 fields separately from HTTP errors.
@@ -1583,11 +1583,13 @@ Standard, unversioned and Azure request formats are supported for URL constructi
 model, project and production proxy availability must be validated separately.
 
 Compatibility notes: `OpenAIResponse.Status` adds `queued` and `cancelled`, so
-exhaustive switches may need these cases. Existing initializer calls and typed
-initializer references remain supported. The shared URL helper now preserves
-escaped path data, including in custom base prefixes: `a%2Fb`, `%41` and `%7E` stay
-encoded instead of becoming `a/b`, `A` and `~`. Ordinary unescaped routes retain
-their format. Custom routes or signatures relying on the old decoded URL need to
+exhaustive switches may need these cases. Existing initializer calls remain
+supported, with omitted parameters staying omitted from JSON. The added defaulted
+parameter changes the initializer's function type; stored references with the
+previous signature need a closure that calls the initializer. The shared URL helper
+now preserves escaped path data, including in custom base prefixes: `a%2Fb`, `%41`
+and `%7E` stay encoded instead of becoming `a/b`, `A` and `~`. Ordinary unescaped
+routes retain their format. Custom routes or signatures relying on the old decoded URL need to
 use the corrected final URL. Supply a raw response ID to retrieval; it is encoded
 as one path segment by the SDK.
 

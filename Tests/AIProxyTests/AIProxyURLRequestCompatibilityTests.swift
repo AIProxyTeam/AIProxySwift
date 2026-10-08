@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import XCTest
 @testable import AIProxy
@@ -12,6 +13,35 @@ final class AIProxyURLRequestCompatibilityTests: XCTestCase {
         }
         return AIProxyDirectRequestBuilder(baseURL: baseURL, unprotectedAuthHeader: (key: "Authorization", value: "Bearer fixture-api-key"))
     }
+
+    #if !targetEnvironment(simulator)
+    func testMissingDeviceCheckTokenThrowsBeforeTransportStarts() async throws {
+        let fixture = ControlledHTTPFixture(steps: [])
+        defer { fixture.invalidate() }
+        let service = await fixture.makeOpenAIService(proxied: true, deviceCheckTokenProvider: { clientID in
+            XCTAssertEqual(clientID, "fixture-client-id")
+            return nil
+        })
+        let finished = AsyncTestSignal()
+        let operation = Task { () -> Result<Void, Error> in
+            defer { finished.fire() }
+            do {
+                _ = try await service.getResponse(responseID: "resp_fixture", secondsToWait: 17)
+                return .success(())
+            } catch {
+                return .failure(error)
+            }
+        }
+        defer { operation.cancel() }
+        try await finished.wait()
+        switch await operation.value {
+        case .failure(AIProxyError.deviceCheckIsUnavailable): break
+        case .failure(let error): XCTFail("Unexpected error: \(error)")
+        case .success: XCTFail("Expected missing DeviceCheck token to reject the request")
+        }
+        XCTAssertTrue(fixture.requests.isEmpty)
+    }
+    #endif
 
     func testOrdinaryURLsMatchFrozenUpstreamExpectations() async throws {
         // Captured with the unmodified b937591 URLComponents path/query composition.
@@ -121,3 +151,4 @@ final class AIProxyURLRequestCompatibilityTests: XCTestCase {
         XCTAssertEqual(fixture.requests.count, 1)
     }
 }
+#endif

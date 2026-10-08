@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 @testable import AIProxy
 
@@ -105,14 +106,18 @@ final class ControlledHTTPFixture: @unchecked Sendable {
         return session
     }
 
-    @AIProxyActor func makeOpenAIService(proxied: Bool, requestFormat: OpenAIRequestFormat = .standard) -> OpenAIService {
+    @AIProxyActor func makeOpenAIService(
+        proxied: Bool,
+        requestFormat: OpenAIRequestFormat = .standard,
+        deviceCheckTokenProvider: @escaping @AIProxyActor @Sendable (String?) async -> String? = { _ in "fixture-device-token" }
+    ) -> OpenAIService {
         let builder: any AIProxyRequestBuilder
         if proxied {
             builder = AIProxyProxiedRequestBuilder(
                 partialKey: "fixture-partial-key",
                 serviceURL: baseURL,
                 clientID: "fixture-client-id",
-                deviceCheckTokenProvider: { _ in "fixture-device-token" }
+                deviceCheckTokenProvider: deviceCheckTokenProvider
             )
         } else {
             builder = AIProxyDirectRequestBuilder(
@@ -184,3 +189,4 @@ private final class ControlledHTTPProtocol: URLProtocol, @unchecked Sendable {
         Self.registry.fixture(host: request.url?.host)?.stopped.fire()
     }
 }
+#endif

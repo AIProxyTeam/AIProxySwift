@@ -346,35 +346,6 @@ import Foundation
         return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
     }
 
-    /// Retrieves one current response snapshot. The caller owns polling and retries.
-    ///
-    /// - Parameters:
-    ///   - responseID: The known provider response ID, encoded as one path segment.
-    ///   - include: Additional output data to include, in the supplied order.
-    ///   - secondsToWait: The amount of time to wait before `URLError.timedOut` is raised.
-    ///   - additionalHeaders: Optional headers alongside the library's default headers.
-    /// - Throws: `AIProxyError.unsuccessfulRequest` for HTTP status codes of 300 or greater.
-    public func getResponse(
-        responseID: String,
-        include: [OpenAIInclude]? = nil,
-        secondsToWait: UInt,
-        additionalHeaders: [String: String] = [:]
-    ) async throws -> OpenAIResponse {
-        do {
-            return try await self.getResponseWithMetadata(
-                responseID: responseID,
-                include: include,
-                secondsToWait: secondsToWait,
-                additionalHeaders: additionalHeaders
-            ).body
-        } catch let error as AIProxyHTTPError {
-            throw AIProxyError.unsuccessfulRequest(
-                statusCode: error.statusCode,
-                responseBody: error.responseBody
-            )
-        }
-    }
-
     /// Retrieves one current response snapshot with its HTTP response headers.
     /// The caller owns polling and retries. Failed or incomplete generation remains response data.
     ///
@@ -384,7 +355,7 @@ import Foundation
     ///   - secondsToWait: The amount of time to wait before `URLError.timedOut` is raised.
     ///   - additionalHeaders: Optional headers alongside the library's default headers.
     /// - Throws: `AIProxyHTTPError` with body and headers for HTTP status codes of 300 or greater.
-    public func getResponseWithMetadata(
+    public func getResponse(
         responseID: String,
         include: [OpenAIInclude]? = nil,
         secondsToWait: UInt,
@@ -412,10 +383,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponseWithMetadata(
-            request,
-            preservingHTTPErrorMetadata: true
-        )
+        return try await self.serviceNetworker.makeRequestAndDeserializeResponseWithHTTPMetadata(request)
     }
 
     /// Creates a streaming 'response' using OpenAI's new API product:

@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import Testing
 @testable import AIProxy
@@ -113,8 +114,8 @@ struct OpenAIBackgroundAcceptanceTests {
         }
     }
 
-    @Test("BM-03.3: caller-requested GET recovers snapshot after queued stream ends", arguments: [false, true], [false, true])
-    @AIProxyActor func explicitRecovery(metadata: Bool, networkError: Bool) async throws {
+    @Test("BM-03.3: caller-requested GET recovers snapshot after queued stream ends", arguments: [false, true])
+    @AIProxyActor func explicitRecovery(networkError: Bool) async throws {
         for proxied in [false, true] {
             let fixture = AcceptanceFixture(scripts: [
                 networkError ? .stream(body: Data((createdSSE + sseTransportPadding).utf8), headers: ["Content-Type": "text/event-stream"]) : .success(createdSSE, contentType: "text/event-stream"),
@@ -142,14 +143,9 @@ struct OpenAIBackgroundAcceptanceTests {
             await release?.value
             #expect(fixture.capture.requests.count == 1)
             let id = try #require(retainedID)
-            let response: OpenAIResponse
-            if metadata {
-                let result = try await fixture.service.getResponseWithMetadata(responseID: id, secondsToWait: 17)
-                response = result.body
-                #expect(result.headers.first { $0.key.lowercased() == "x-request-id" }?.value == "fixture-recovery")
-            } else {
-                response = try await fixture.service.getResponse(responseID: id, secondsToWait: 17)
-            }
+            let result = try await fixture.service.getResponse(responseID: id, secondsToWait: 17)
+            let response = result.body
+            #expect(result.headers.first { $0.key.lowercased() == "x-request-id" }?.value == "fixture-recovery")
             #expect(response.id == id)
             #expect(response.status == .completed)
             #expect(response.outputText == "firstsecond")
@@ -187,8 +183,8 @@ struct OpenAIBackgroundAcceptanceTests {
         #expect(explanation == "Fixture refusal explanation.")
         #expect(fixture.capture.requests.count == 1)
     }
-    @Test("BM-05.2: HTTP 200 failure, incomplete and cancellation are inspectable data", arguments: ["failed", "incomplete", "cancelled"], [false, true])
-    @AIProxyActor func terminalSnapshotDetails(status: String, metadata: Bool) async throws {
+    @Test("BM-05.2: HTTP 200 failure, incomplete and cancellation are inspectable data", arguments: ["failed", "incomplete", "cancelled"])
+    @AIProxyActor func terminalSnapshotDetails(status: String) async throws {
         for proxied in [false, true] {
             let details = if status == "failed" {
                 ",\"error\":{\"code\":\"fixture_failure\",\"message\":\"Fixture generation failed.\"}"
@@ -198,7 +194,7 @@ struct OpenAIBackgroundAcceptanceTests {
             let json = "{\"id\":\"resp_example\",\"status\":\"\(status)\",\"output\":[]\(details)}"
             let fixture = AcceptanceFixture(scripts: [.success(json)], proxied: proxied)
             defer { fixture.finish() }
-            let response = try await retrieveSnapshot(fixture.service, metadata: metadata)
+            let response = try await fixture.service.getResponse(responseID: "resp_example", secondsToWait: 17).body
             #expect(response.id == "resp_example")
             #expect(response.status?.rawValue == status)
             #expect(response.error?.code == (status == "failed" ? "fixture_failure" : nil))
@@ -209,11 +205,11 @@ struct OpenAIBackgroundAcceptanceTests {
         }
     }
 
-    @Test("BM-05.3: retrieval preserves supported output order, source, annotation and usage", arguments: [false, true], [false, true])
-    @AIProxyActor func supportedOutputThroughRetrieval(metadata: Bool, proxied: Bool) async throws {
+    @Test("BM-05.3: retrieval preserves supported output order, source, annotation and usage", arguments: [false, true])
+    @AIProxyActor func supportedOutputThroughRetrieval(proxied: Bool) async throws {
         let fixture = AcceptanceFixture(scripts: [.success(richCompletedSnapshot)], proxied: proxied)
         defer { fixture.finish() }
-        let response = try await retrieveSnapshot(fixture.service, metadata: metadata)
+        let response = try await fixture.service.getResponse(responseID: "resp_example", secondsToWait: 17).body
         #expect(response.status == .completed)
         #expect(response.outputText == "firstsecond") // Immutable upstream outputText uses joined().
         #expect(response.output.count == 4)
@@ -316,12 +312,8 @@ private extension ControlledHTTPFixture.Step {
     }
 }
 
-@AIProxyActor private func retrieveSnapshot(_ service: OpenAIService, metadata: Bool) async throws -> OpenAIResponse {
-    if metadata { return try await service.getResponseWithMetadata(responseID: "resp_example", secondsToWait: 17).body }
-    return try await service.getResponse(responseID: "resp_example", secondsToWait: 17)
-}
-
 private let richCompletedSnapshot = #"{"id":"resp_example","status":"completed","output":[{"type":"reasoning","id":"rs_fixture","summary":[{"type":"summary_text","text":"Fixture summary."}]},{"type":"web_search_call","id":"ws_fixture","status":"completed","action":{"type":"search","query":"fixture","sources":[{"type":"url","url":"https://example.com/source"}]}},{"type":"message","id":"msg_first","content":[{"type":"output_text","text":"first","annotations":[{"type":"url_citation","start_index":0,"end_index":5,"url":"https://example.com/source","title":"Fixture source"}]}]},{"type":"message","id":"msg_second","content":[{"type":"output_text","text":"second","annotations":[]}]}],"usage":{"input_tokens":5,"input_tokens_details":{"cached_tokens":2},"output_tokens":8,"output_tokens_details":{"reasoning_tokens":3},"total_tokens":13}}"#
 
 // SSE comments supply enough bytes to exercise incremental URLSession.AsyncBytes delivery.
 private let sseTransportPadding = String(repeating: ": fixture flush\n\n", count: 512)
+#endif

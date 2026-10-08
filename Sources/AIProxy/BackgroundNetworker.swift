@@ -8,12 +8,27 @@ import Foundation
 
 struct BackgroundNetworker {
 
-    /// Throws for HTTP status codes of 300 or greater; metadata preservation is opt-in.
+    /// Existing buffered callers retain `AIProxyError.unsuccessfulRequest` for HTTP failures.
     @AIProxyActor static func makeRequestAndWaitForData(
         _ session: URLSession,
         _ request: URLRequest,
-        _ progressCallback: (@Sendable (Double) -> Void)? = nil,
-        preservingHTTPErrorMetadata: Bool = false
+        _ progressCallback: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> (Data, HTTPURLResponse) {
+        do {
+            return try await self.makeRequestAndWaitForDataWithHTTPMetadata(session, request, progressCallback)
+        } catch let error as AIProxyHTTPError {
+            throw AIProxyError.unsuccessfulRequest(
+                statusCode: error.statusCode,
+                responseBody: error.responseBody
+            )
+        }
+    }
+
+    /// Throws `AIProxyHTTPError` with the response body and headers for HTTP status codes of 300 or greater.
+    @AIProxyActor static func makeRequestAndWaitForDataWithHTTPMetadata(
+        _ session: URLSession,
+        _ request: URLRequest,
+        _ progressCallback: (@Sendable (Double) -> Void)? = nil
     ) async throws -> (Data, HTTPURLResponse) {
         if let progressCallback {
             (session.delegate as? AIProxyCertificatePinningDelegate)?.progressCallback = progressCallback
@@ -27,16 +42,10 @@ struct BackgroundNetworker {
         }
         if httpResponse.statusCode > 299 {
             logIf(.error)?.error("Receieved a non-200 status code: \(httpResponse.statusCode)")
-            if preservingHTTPErrorMetadata {
-                throw AIProxyHTTPError(
-                    statusCode: httpResponse.statusCode,
-                    responseBody: String(data: data, encoding: .utf8) ?? "",
-                    headers: httpResponse.readableHeaders
-                )
-            }
-            throw AIProxyError.unsuccessfulRequest(
+            throw AIProxyHTTPError(
                 statusCode: httpResponse.statusCode,
-                responseBody: String(data: data, encoding: .utf8) ?? ""
+                responseBody: String(data: data, encoding: .utf8) ?? "",
+                headers: httpResponse.readableHeaders
             )
         }
         return (data, httpResponse)

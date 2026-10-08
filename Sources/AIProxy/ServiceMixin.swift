@@ -17,17 +17,29 @@ extension ServiceMixin {
         return response.body
     }
 
+    // Existing header-returning APIs still use AIProxyError.unsuccessfulRequest for HTTP failures.
     @AIProxyActor func makeRequestAndDeserializeResponseWithMetadata<T: Decodable & Sendable>(
-        _ request: URLRequest,
-        preservingHTTPErrorMetadata: Bool = false
+        _ request: URLRequest
+    ) async throws -> AIProxyResponseWithHeaders<T> {
+        do {
+            return try await self.makeRequestAndDeserializeResponseWithHTTPMetadata(request)
+        } catch let error as AIProxyHTTPError {
+            throw AIProxyError.unsuccessfulRequest(
+                statusCode: error.statusCode,
+                responseBody: error.responseBody
+            )
+        }
+    }
+
+    @AIProxyActor func makeRequestAndDeserializeResponseWithHTTPMetadata<T: Decodable & Sendable>(
+        _ request: URLRequest
     ) async throws -> AIProxyResponseWithHeaders<T> {
         if AIProxy.printRequestBodies {
             printRequestBody(request)
         }
-        let (data, httpResponse) = try await BackgroundNetworker.makeRequestAndWaitForData(
+        let (data, httpResponse) = try await BackgroundNetworker.makeRequestAndWaitForDataWithHTTPMetadata(
             self.urlSession,
-            request,
-            preservingHTTPErrorMetadata: preservingHTTPErrorMetadata
+            request
         )
         if AIProxy.printResponseBodies {
             printBufferedResponseBody(data)

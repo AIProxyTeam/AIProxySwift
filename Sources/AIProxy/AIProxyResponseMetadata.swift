@@ -30,7 +30,7 @@ nonisolated public struct AIProxyChunkStreamResponse<Chunk: Sendable>: Sendable 
     }
 }
 
-/// An HTTP failure returned by metadata-preserving response retrieval.
+/// An HTTP failure returned by OpenAI response retrieval.
 /// Header field names should be compared case-insensitively.
 nonisolated public struct AIProxyHTTPError: Error, Sendable {
     public let statusCode: Int
