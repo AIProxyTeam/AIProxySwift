@@ -10,7 +10,7 @@ struct OpenAIBackgroundAcceptanceTests {
         let fixture = AcceptanceFixture(scripts: [.success(queuedSnapshot)], proxied: proxied)
         defer { fixture.finish() }
         let response = try await fixture.service.createResponse(
-            requestBody: OpenAICreateResponseRequestBody(background: true, model: "fixture-model"),
+            requestBody: OpenAICreateResponseRequestBody(model: "fixture-model", background: true),
             secondsToWait: 17,
             additionalHeaders: ["X-Example": "fixture"]
         )
@@ -287,7 +287,7 @@ private extension ControlledHTTPFixture.Step {
     func finish() { capture.invalidate() }
     func backgroundStream() async throws -> AsyncThrowingStream<OpenAIResponseStreamingEvent, Error> {
         try await service.createStreamingResponse(
-            requestBody: OpenAICreateResponseRequestBody(background: true, model: "fixture-model", store: false, stream: false),
+            requestBody: OpenAICreateResponseRequestBody(model: "fixture-model", store: false, stream: false, background: true),
             secondsToWait: 17
         )
     }

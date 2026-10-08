@@ -16,9 +16,6 @@ import Foundation
 /// Implementor's note: See ResponseCreateParamsBase in `src/openai/types/responses/response_create_params.py`
 nonisolated public struct OpenAICreateResponseRequestBody: Encodable, Sendable {
 
-    /// Whether to run generation in the background. Omitted unless explicitly supplied.
-    public let background: Bool?
-
     /// Specify additional output data to include in the model response.
     public let include: [OpenAIInclude]?
 
@@ -102,6 +99,9 @@ nonisolated public struct OpenAICreateResponseRequestBody: Encodable, Sendable {
     /// A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse.
     public let user: String?
 
+    /// Whether to run generation in the background. Omitted unless explicitly supplied.
+    public let background: Bool?
+
     private enum CodingKeys: String, CodingKey {
         case background
         case include
@@ -130,7 +130,6 @@ nonisolated public struct OpenAICreateResponseRequestBody: Encodable, Sendable {
     // To regenerate, use `cmd-shift-a` > Generate Memberwise Initializer
     // To format, place the cursor in the initializer's parameter list and use `ctrl-m`
     public init(
-        background: Bool? = nil,
         include: [OpenAIInclude]? = nil,
         input: OpenAIResponse.Input? = nil,
         instructions: String? = nil,
@@ -150,9 +149,9 @@ nonisolated public struct OpenAICreateResponseRequestBody: Encodable, Sendable {
         tools: [OpenAICreateResponseRequestBody.Tool]? = nil,
         topP: Double? = nil,
         truncation: OpenAICreateResponseRequestBody.Truncation? = nil,
-        user: String? = nil
+        user: String? = nil,
+        background: Bool? = nil
     ) {
-        self.background = background
         self.include = include
         self.input = input
         self.instructions = instructions
@@ -173,6 +172,7 @@ nonisolated public struct OpenAICreateResponseRequestBody: Encodable, Sendable {
         self.topP = topP
         self.truncation = truncation
         self.user = user
+        self.background = background
     }
 
     // For naming consistency with sdkVersion <= 0.120.0

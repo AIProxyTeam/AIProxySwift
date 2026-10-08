@@ -31,10 +31,10 @@ final class OpenAIBackgroundModelsTests: XCTestCase {
         for background in [false, true] {
             for store in [nil, false, true] as [Bool?] {
                 let request = OpenAICreateResponseRequestBody(
-                    background: background,
                     model: "example-model",
                     store: store,
-                    stream: false
+                    stream: false,
+                    background: background
                 )
                 let object = try encodedObject(request)
 
@@ -51,9 +51,9 @@ final class OpenAIBackgroundModelsTests: XCTestCase {
 
     func testExplicitNilBackgroundMatchesLegacyOmission() throws {
         let explicit = OpenAICreateResponseRequestBody(
-            background: nil,
             input: .text("Describe a triangle."),
-            model: "example-model"
+            model: "example-model",
+            background: nil
         )
         let legacy = OpenAICreateResponseRequestBody(
             input: .text("Describe a triangle."),

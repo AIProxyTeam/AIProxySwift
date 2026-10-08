@@ -1520,10 +1520,10 @@ import AIProxy
 
 let response = try await service.createResponse(
     requestBody: .init(
-        background: true,
         input: .text("Explain how a solar eclipse occurs."),
         model: model,
-        store: true
+        store: true,
+        background: true
     ),
     secondsToWait: 60
 )
