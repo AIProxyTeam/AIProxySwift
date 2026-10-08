@@ -34,7 +34,7 @@ extension ServiceMixin {
         )
     }
 
-    /// Response retrieval preserves HTTP failure headers without changing existing request errors.
+    /// OpenAI Responses requests preserve HTTP failure bytes and headers.
     @AIProxyActor func makeRequestAndDeserializeResponseWithHTTPMetadata<T: Decodable & Sendable>(
         _ request: URLRequest
     ) async throws -> AIProxyResponseWithHeaders<T> {
@@ -53,7 +53,7 @@ extension ServiceMixin {
             logIf(.error)?.error("Receieved a non-200 status code: \(httpResponse.statusCode)")
             throw AIProxyHTTPError(
                 statusCode: httpResponse.statusCode,
-                responseBody: String(data: data, encoding: .utf8) ?? "",
+                responseData: data,
                 headers: httpResponse.readableHeaders
             )
         }
@@ -76,6 +76,42 @@ extension ServiceMixin {
             request
         )
 
+        return self.decodeStreamingChunks(asyncBytes)
+    }
+
+    /// OpenAI Responses streaming establishment preserves HTTP failure bytes and headers.
+    @AIProxyActor func makeRequestAndDeserializeStreamingChunksWithHTTPMetadata<T: Decodable & Sendable>(
+        _ request: URLRequest
+    ) async throws -> AsyncThrowingStream<T, Error> {
+        if AIProxy.printRequestBodies {
+            printRequestBody(request)
+        }
+
+        let session = self.urlSession
+        let (asyncBytes, response) = try await session.bytes(
+            for: request,
+            delegate: session.delegate as? URLSessionTaskDelegate
+        )
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AIProxyError.assertion("Network response is not an http response")
+        }
+        if httpResponse.statusCode > 299 {
+            var responseData = Data()
+            for try await byte in asyncBytes {
+                responseData.append(byte)
+            }
+            throw AIProxyHTTPError(
+                statusCode: httpResponse.statusCode,
+                responseData: responseData,
+                headers: httpResponse.readableHeaders
+            )
+        }
+        return self.decodeStreamingChunks(asyncBytes)
+    }
+
+    @AIProxyActor private func decodeStreamingChunks<T: Decodable & Sendable>(
+        _ asyncBytes: URLSession.AsyncBytes
+    ) -> AsyncThrowingStream<T, Error> {
         let sequence = asyncBytes.lines.compactMap { @AIProxyActor [shouldPrint = AIProxy.printResponseBodies] (line: String) -> T? in
             if shouldPrint {
                 printStreamingResponseChunk(line)

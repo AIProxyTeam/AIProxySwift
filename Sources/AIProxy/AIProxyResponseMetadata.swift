@@ -30,16 +30,26 @@ nonisolated public struct AIProxyChunkStreamResponse<Chunk: Sendable>: Sendable 
     }
 }
 
-/// An HTTP failure returned by OpenAI response retrieval.
+/// An HTTP failure returned by OpenAI Responses creation, streaming establishment or retrieval.
 /// Header field names should be compared case-insensitively.
-nonisolated public struct AIProxyHTTPError: Error, Sendable {
+nonisolated public struct AIProxyHTTPError: LocalizedError, Sendable {
     public let statusCode: Int
-    public let responseBody: String
+    /// The original HTTP response body bytes, including non-UTF-8 content.
+    public let responseData: Data
     public let headers: [String: String]
 
-    public init(statusCode: Int, responseBody: String, headers: [String: String]) {
+    /// The response body decoded as UTF-8, or an empty string if decoding fails.
+    public var responseBody: String {
+        String(data: self.responseData, encoding: .utf8) ?? ""
+    }
+
+    public var errorDescription: String? {
+        "AIProxy - the request resulted in a status code of \(self.statusCode) with response body: \(self.responseBody)."
+    }
+
+    public init(statusCode: Int, responseData: Data, headers: [String: String]) {
         self.statusCode = statusCode
-        self.responseBody = responseBody
+        self.responseData = responseData
         self.headers = headers
     }
 }

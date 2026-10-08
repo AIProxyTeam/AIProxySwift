@@ -153,6 +153,7 @@ final class OpenAIResponseRetrievalTests: XCTestCase {
         let failures: [(Int, Data, String, [String: String])] = [
             (300, Data("multiple choices".utf8), "multiple choices", ["X-Request-ID": "req300"]),
             (302, Data("redirect body".utf8), "redirect body", ["Retry-After": "7", "X-Request-ID": "req302"]),
+            (400, Data("{\"error\":\"bad request\"}".utf8), "{\"error\":\"bad request\"}", ["X-Request-ID": "req400"]),
             (401, Data("unauthorized".utf8), "unauthorized", ["Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT", "X-Request-ID": "req401"]),
             (403, Data("forbidden".utf8), "forbidden", ["X-Request-ID": "req403"]),
             (404, Data(), "", ["X-Request-ID": "req404"]),
@@ -170,6 +171,7 @@ final class OpenAIResponseRetrievalTests: XCTestCase {
                     XCTFail("Expected HTTP failure")
                 } catch let error as AIProxyHTTPError {
                     XCTAssertEqual(error.statusCode, status)
+                    XCTAssertEqual(error.responseData, data)
                     XCTAssertEqual(error.responseBody, text)
                     for (name, value) in headers { XCTAssertEqual(header(name, in: error.headers), value) }
                     XCTAssertEqual(header("Retry-After", in: error.headers), headers["Retry-After"])
@@ -181,6 +183,7 @@ final class OpenAIResponseRetrievalTests: XCTestCase {
             let service = await success.makeOpenAIService(proxied: proxied)
             let response = try await Self.retrieve(service: service)
             XCTAssertEqual(response.body.id, "resp_fixture")
+            XCTAssertEqual(success.requests.count, 1)
         }
     }
 

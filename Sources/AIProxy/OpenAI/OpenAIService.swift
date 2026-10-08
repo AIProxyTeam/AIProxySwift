@@ -332,6 +332,9 @@ import Foundation
     ///   - additionalHeaders: Optional headers to pass up with the request alongside the lib's default headers
     /// - Returns: An OpenAI response. See this reference:
     ///            https://platform.openai.com/docs/api-reference/responses/object#responses/object-output
+    /// - Throws: `AIProxyHTTPError` with the status code, original body bytes and headers for HTTP status codes of 300 or greater.
+    ///   This applies regardless of `background`. Callers previously catching `AIProxyError.unsuccessfulRequest`
+    ///   for Responses creation must catch `AIProxyHTTPError` instead. Transport and decoding errors retain their types.
     public func createResponse(
         requestBody: OpenAICreateResponseRequestBody,
         secondsToWait: UInt,
@@ -343,7 +346,8 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        let response: AIProxyResponseWithHeaders<OpenAIResponse> = try await self.serviceNetworker.makeRequestAndDeserializeResponseWithHTTPMetadata(request)
+        return response.body
     }
 
     /// Retrieves one current response snapshot with its HTTP response headers.
@@ -354,7 +358,8 @@ import Foundation
     ///   - include: Additional output data to include, in the supplied order.
     ///   - secondsToWait: The amount of time to wait before `URLError.timedOut` is raised.
     ///   - additionalHeaders: Optional headers alongside the library's default headers.
-    /// - Throws: `AIProxyHTTPError` with body and headers for HTTP status codes of 300 or greater.
+    /// - Throws: `AIProxyHTTPError` with the status code, original body bytes and headers for HTTP status codes of 300 or greater.
+    ///   Transport and decoding errors retain their types.
     public func getResponse(
         responseID: String,
         include: [OpenAIInclude]? = nil,
@@ -396,6 +401,9 @@ import Foundation
     ///   - additionalHeaders: Optional headers to pass up with the request alongside the lib's default headers
     /// - Returns: An async sequence of response chunks. See this reference:
     ///            https://platform.openai.com/docs/api-reference/responses/streaming
+    /// - Throws: `AIProxyHTTPError` with the status code, original body bytes and headers if streaming establishment returns an HTTP status code of 300 or greater.
+    ///   This applies regardless of `background`. Callers previously catching `AIProxyError.unsuccessfulRequest`
+    ///   for Responses streaming establishment must catch `AIProxyHTTPError` instead. Transport errors retain their types.
     public func createStreamingResponse(
         requestBody: OpenAICreateResponseRequestBody,
         secondsToWait: UInt,
@@ -409,9 +417,10 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeStreamingChunks(request)
+        return try await self.serviceNetworker.makeRequestAndDeserializeStreamingChunksWithHTTPMetadata(request)
     }
 
+    /// Forwards to `createStreamingResponse`, including its `AIProxyHTTPError` catch contract.
     @available(*, deprecated, message: "This has been renamed to createStreamingResponse")
     public func createStreamingResponseEvents(
         requestBody: OpenAICreateResponseRequestBody,
@@ -772,6 +781,7 @@ extension OpenAIService {
         return try await self.embeddingRequest(body: body, secondsToWait: 60, additionalHeaders: additionalHeaders)
     }
 
+    /// Forwards to `createResponse`, including its `AIProxyHTTPError` catch contract.
     @available(*, deprecated, message: "This has been renamed to createResponse(body:secondsToWait:). For parity with your existing call, pass 60 as the secondsToWait argument.")
     public func createResponse(
         requestBody: OpenAICreateResponseRequestBody,
@@ -780,6 +790,7 @@ extension OpenAIService {
         return try await self.createResponse(requestBody: requestBody, secondsToWait: 60, additionalHeaders: additionalHeaders)
     }
 
+    /// Forwards to `createStreamingResponse`, including its `AIProxyHTTPError` catch contract.
     @available(*, deprecated, message: "This has been renamed to createStreamingResponse(body:secondsToWait:). For parity with your existing call, pass 60 as the secondsToWait argument.")
     public func createStreamingResponse(
         requestBody: OpenAICreateResponseRequestBody,

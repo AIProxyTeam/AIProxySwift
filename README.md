@@ -1494,16 +1494,16 @@ Note: there is also a streaming version of this snippet below.
     let requestBody = OpenAICreateResponseRequestBody(
         input: .text("hello world"),
         model: "gpt-5.1",
+        previousResponseId: nil,                                 // Pass this on future requests to save chat history
         reasoning: .init(effort: .noReasoning),
-        text: .init(verbosity: .high),                           // Optional: Use low verbosity for concise responses
-        previousResponseId: nil                                  // Pass this on future requests to save chat history
+        text: .init(verbosity: .high)                            // Optional: Use low verbosity for concise responses
     )
 
     do {
         let response = try await openAIService.createResponse(requestBody: requestBody)
         print(response.outputText)
-    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-        print("Received \(statusCode) status code with response body: \(responseBody)")
+    } catch let error as AIProxyHTTPError {
+        print("Received \(error.statusCode) status code with response body: \(error.responseBody)")
     } catch {
         print("Could not get a text response from OpenAI: \(error)")
     }
@@ -1541,8 +1541,9 @@ if result.body.status == .completed {
 Each GET returns a snapshot in `.body` and HTTP headers in `.headers`. Poll again
 while the status is `.queued` or `.inProgress`; your code owns polling and retries.
 Generation failures are response data (`body.error` or `body.incompleteDetails`).
-GET HTTP failures throw `AIProxyHTTPError` (`statusCode`, `responseBody`, `headers`);
-creation keeps its existing `AIProxyError.unsuccessfulRequest` contract.
+Creation, initial streaming and GET HTTP failures throw `AIProxyHTTPError`: inspect
+`statusCode`, `headers`, UTF-8 `responseBody` or exact `responseData` bytes. Transport
+and decoding errors keep their original types.
 
 Recovery requires a known ID and retained data. The example requests storage with
 `store: true`; check the [OpenAI background guide](https://developers.openai.com/api/docs/guides/background)
@@ -1555,6 +1556,8 @@ cancellation are not exposed. Cancelling a local GET stops only that request.
 
 Compatibility notes:
 
+- For Responses creation and streaming HTTP failures, catch `AIProxyHTTPError`
+  instead of `AIProxyError.unsuccessfulRequest`. Other APIs keep their existing errors.
 - Add `.queued` and `.cancelled` to exhaustive `Status` switches.
 - Normal initializer calls and JSON are unchanged; references using the previous
   initializer function type need a closure.
@@ -1613,8 +1616,8 @@ Compatibility notes:
                   with arguments: \(functionCall.arguments)")
                   """)
         }
-    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-        print("Received \(statusCode) status code with response body: \(responseBody)")
+    } catch let error as AIProxyHTTPError {
+        print("Received \(error.statusCode) status code with response body: \(error.responseBody)")
     } catch {
         print("Could not create a tool call response from OpenAI: \(error)")
     }
@@ -1683,8 +1686,8 @@ Compatibility notes:
             secondsToWait: 120
         )
         print(response.outputText)
-    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-        print("Received \(statusCode) status code with response body: \(responseBody)")
+    } catch let error as AIProxyHTTPError {
+        print("Received \(error.statusCode) status code with response body: \(error.responseBody)")
     } catch {
         print("Could not get a structured output response from OpenAI: \(error)")
     }
@@ -1723,8 +1726,8 @@ Please also see the Structured Outputs snippet above, which is a more modern way
             secondsToWait: 120
         )
         print(response.outputText)
-    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-        print("Received \(statusCode) status code with response body: \(responseBody)")
+    } catch let error as AIProxyHTTPError {
+        print("Received \(error.statusCode) status code with response body: \(error.responseBody)")
     } catch {
         print("Could not get a JSON mode response from OpenAI: \(error)")
     }
@@ -1781,8 +1784,8 @@ Please also see the Structured Outputs snippet above, which is a more modern way
             secondsToWait: 60
         )
         print(response.outputText)
-    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-        print("Received \(statusCode) status code with response body: \(responseBody)")
+    } catch let error as AIProxyHTTPError {
+        print("Received \(error.statusCode) status code with response body: \(error.responseBody)")
     } catch {
         print("Could not create a multi-modal OpenAI Response: \(error)")
     }
@@ -1816,8 +1819,8 @@ Note: there is also a streaming version of this snippet below.
     do {
         let response = try await openAIService.createResponse(requestBody: requestBody)
         print(response.outputText)
-    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-        print("Received \(statusCode) status code with response body: \(responseBody)")
+    } catch let error as AIProxyHTTPError {
+        print("Received \(error.statusCode) status code with response body: \(error.responseBody)")
     } catch {
         print("Could not get web search result from OpenAI: \(error)")
     }
@@ -1859,8 +1862,8 @@ Replace the `fileID` with the ID returned from the snippet `How to upload a file
     do {
         let response = try await openAIService.createResponse(requestBody: requestBody)
         print(response.outputText)
-    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-        print("Received \(statusCode) status code with response body: \(responseBody)")
+    } catch let error as AIProxyHTTPError {
+        print("Received \(error.statusCode) status code with response body: \(error.responseBody)")
     } catch {
         print("Could not prompt with file contents: \(error)")
     }
@@ -1912,8 +1915,8 @@ Replace the `fileID` with the ID returned from the snippet `How to upload a file
     do {
         let response = try await openAIService.createResponse(requestBody: requestBody)
         print(response.outputText)
-    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-        print("Received \(statusCode) status code with response body: \(responseBody)")
+    } catch let error as AIProxyHTTPError {
+        print("Received \(error.statusCode) status code with response body: \(error.responseBody)")
     } catch {
         print("Could not prompt with image inputs: \(error)")
     }
@@ -2101,8 +2104,8 @@ You'll need two IDs for this snippet:
                 break
             }
         }
-    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-        print("Received \(statusCode) status code with response body: \(responseBody)")
+    } catch let error as AIProxyHTTPError {
+        print("Received \(error.statusCode) status code with response body: \(error.responseBody)")
     } catch {
         print("Could not get a streaming response from OpenAI: \(error)")
     }
@@ -2159,8 +2162,8 @@ You'll need two IDs for this snippet:
                 break
             }
         }
-    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-        print("Received \(statusCode) status code with response body: \(responseBody)")
+    } catch let error as AIProxyHTTPError {
+        print("Received \(error.statusCode) status code with response body: \(error.responseBody)")
     } catch {
         print("Could not get a streaming response from OpenAI: \(error)")
     }
@@ -2200,8 +2203,8 @@ You'll need two IDs for this snippet:
                 break
             }
         }
-    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-        print("Received \(statusCode) status code with response body: \(responseBody)")
+    } catch let error as AIProxyHTTPError {
+        print("Received \(error.statusCode) status code with response body: \(error.responseBody)")
     } catch {
         print("Could not get a text response from OpenAI: \(error)")
     }
@@ -2255,8 +2258,8 @@ Once your files are added and processed, you can run this snippet on your `vecto
                 break
             }
         }
-    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-        print("Received \(statusCode) status code with response body: \(responseBody)")
+    } catch let error as AIProxyHTTPError {
+        print("Received \(error.statusCode) status code with response body: \(error.responseBody)")
     } catch {
         print("Could not get a text response from OpenAI: \(error)")
     }
@@ -2315,8 +2318,8 @@ Once your files are added and processed, you can run this snippet on your `vecto
         //         break
         //     }
         // }
-    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
-        print("Received \(statusCode) status code with response body: \(responseBody)")
+    } catch let error as AIProxyHTTPError {
+        print("Received \(error.statusCode) status code with response body: \(error.responseBody)")
     } catch {
         print("Could not get a text response from OpenAI: \(error)")
     }

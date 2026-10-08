@@ -108,7 +108,7 @@ final class AIProxyURLRequestCompatibilityTests: XCTestCase {
         }
     }
 
-    func testExistingOpenAIAndMistralMethodsKeepLegacyHTTPError() async throws {
+    func testOpenAIChatCompletionAndMistralKeepLegacyHTTPError() async throws {
         for proxied in [false, true] {
             for existingMethod in ["openai", "mistral"] {
                 let fixture = ControlledHTTPFixture(steps: [.http(statusCode: 429, body: Data("legacy failure\n".utf8), headers: ["Retry-After": "9"])])
@@ -116,7 +116,7 @@ final class AIProxyURLRequestCompatibilityTests: XCTestCase {
                 do {
                     if existingMethod == "openai" {
                         let service = await fixture.makeOpenAIService(proxied: proxied)
-                        _ = try await service.createResponse(requestBody: .init(input: .text("fixture-input"), model: "fixture-model"), secondsToWait: 17)
+                        _ = try await service.chatCompletionRequest(body: .init(model: "fixture-model", messages: [.user(content: .text("fixture-input"))]), secondsToWait: 17)
                     } else {
                         let builder = await Self.builder(baseURL: fixture.baseURL, proxied: proxied)
                         let service = MistralService(requestBuilder: builder, serviceNetworker: ControlledSessionNetworker(urlSession: fixture.makeSession(proxied: proxied)))
