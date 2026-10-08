@@ -77,12 +77,26 @@ public enum AIProxy {
     ///
     ///                          If possible, StoreKit's appTransactionID will be used as the stable ID.
     ///                          If the app store receipt cannot be verified then we fall back to a GUID synced across iCloud-backed keychain and UKVS.
+    ///
+    ///   - verificationMethod:  How requests prove they come from your app on a real device. Must match the
+    ///                          verification method of your services in the AIProxy dashboard.
+    ///                          `.deviceCheck` (the default) sends a DeviceCheck token with every request.
+    ///                          `.appAttest(appURL:)` attests the install once with Apple's App Attest, starting
+    ///                          now in the background, and then signs every request with a Secure Enclave key.
+    ///                          `appURL` is shown on the App Attest tab of the dashboard (`https://api.aiproxy.com/<app>`).
+    ///                          App Attest requires:
+    ///                              1. The App Attest capability on your target (Signing & Capabilities > + Capability > App Attest)
+    ///                              2. A `serviceURL` on every service you create
+    ///                              3. The App Attest tab of your app in the dashboard filled in with your team ID and bundle ID
+    ///                          On the Simulator, set the `AIPROXY_APP_ATTEST_BYPASS` env variable from that tab.
+    ///                          `AIProxy.attestIfNeeded()` awaits the attestation if you want to surface a failure early.
     nonisolated public static func configure(
         logLevel: AIProxyLogLevel,
         printRequestBodies: Bool,
         printResponseBodies: Bool,
         resolveDNSOverTLS: Bool,
-        useStableID: Bool
+        useStableID: Bool,
+        verificationMethod: AIProxyVerificationMethod = .deviceCheck
     ) {
         let previouslyUsingStableID = self.configuration?.useStableID ?? false
         AIProxyLogLevel.callerDesiredLogLevel = logLevel
@@ -90,7 +104,8 @@ public enum AIProxy {
             resolveDNSOverTLS: resolveDNSOverTLS,
             printRequestBodies: printRequestBodies,
             printResponseBodies: printResponseBodies,
-            useStableID: useStableID
+            useStableID: useStableID,
+            verificationMethod: verificationMethod
         )
         if useStableID && !previouslyUsingStableID {
             Task { @AIProxyActor in
@@ -98,6 +113,11 @@ public enum AIProxy {
                     self.configuration?.stableID = newStableID
                 }
             }
+        }
+        // The one-time attestation happens now, at launch, so that it never lands on the
+        // user's first request. No-op on the Simulator, where the bypass token is used.
+        if case .appAttest(let appURL) = verificationMethod {
+            AIProxyAppAttestClient.warmUp(appURL: appURL)
         }
     }
 
@@ -142,6 +162,25 @@ public enum AIProxy {
     nonisolated public static var printResponseBodies: Bool {
         self.configuration?.printResponseBodies ?? false
     }
+
+    /// The verification method every proxied request uses. Set it in `AIProxy.configure`.
+    nonisolated public static var verificationMethod: AIProxyVerificationMethod {
+        self.configuration?.verificationMethod ?? .deviceCheck
+    }
+
+    /// Waits for the one-time App Attest registration that `AIProxy.configure` started for
+    /// `verificationMethod: .appAttest(appURL:)`. Optional: call it when you want to surface a
+    /// registration failure before the user's first request rather than on it.
+    ///
+    /// Does nothing on the Simulator or on hardware without a Secure Enclave, where requests fall back
+    /// to the `AIPROXY_APP_ATTEST_BYPASS` token. Throws `AIProxyError` when a registration fails; the
+    /// SDK backs off and retries on a later request, so a failure here is not fatal.
+    @AIProxyActor public static func attestIfNeeded() async throws {
+        for client in AIProxyAppAttestClient.allShared where client.isSupported {
+            try await client.attestIfNeeded()
+        }
+    }
+
 
     /// - Parameters:
     ///   - partialKey: Your partial key is displayed in the AIProxy dashboard when you submit your provider's key.
@@ -227,6 +266,7 @@ public enum AIProxy {
         clientID: String? = nil,
         requestFormat: OpenAIRequestFormat = .standard
     ) -> OpenAIService {
+
         return OpenAIProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -279,6 +319,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> GeminiService {
+
         return GeminiProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -323,6 +364,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> AnthropicService {
+
         return AnthropicProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -369,6 +411,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> StabilityAIService {
+
         return StabilityAIProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -413,6 +456,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> DeepLService {
+
         return DeepLProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -460,6 +504,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> TogetherAIService {
+
         return TogetherAIProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -504,6 +549,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> ReplicateService {
+
         return ReplicateProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -548,6 +594,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> ElevenLabsService {
+
         return ElevenLabsProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -592,6 +639,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> FalService {
+
         return FalProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -636,6 +684,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> GroqService {
+
         return GroqProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -682,6 +731,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> PerplexityService {
+
         return PerplexityProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -726,6 +776,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> MistralService {
+
         return MistralProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -774,6 +825,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> EachAIService {
+
         return EachAIProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -818,6 +870,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> OpenRouterService {
+
         return OpenRouterProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -864,6 +917,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> DeepSeekService {
+
         return DeepSeekProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -910,6 +964,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> FireworksAIService {
+
         return FireworksAIProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,
@@ -954,6 +1009,7 @@ public enum AIProxy {
         serviceURL: String,
         clientID: String? = nil
     ) -> BraveService {
+
         return BraveProxiedService(
             partialKey: partialKey,
             serviceURL: serviceURL,

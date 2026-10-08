@@ -77,6 +77,7 @@ During your app's launch, call `AIProxy.configure`. Using this method, you can s
 - whether to print request/response bodies to Xcode's console, which is useful for debugging or contributing to the library
 - whether to resolve DNS queries [using Cloudflare's DoT](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-tls/) (recommended)
 - whether to use stable identifiers as client IDs (recommended)
+- which verification method your services use: DeviceCheck (the default) or App Attest. See [How to use App Attest instead of DeviceCheck](#how-to-use-app-attest-instead-of-devicecheck)
 
 In a SwiftUI app, call `AIProxy.configure` in your app's composition root:
 
@@ -7355,6 +7356,73 @@ In such a case, you can pop UI to the end user by catching AIProxyError.deviceCh
 ```
 
 
+### How to use App Attest instead of DeviceCheck
+
+Each AIProxy service has a verification method, chosen on the service's page in the dashboard:
+DeviceCheck, App Attest, or none. DeviceCheck is the default and needs no setup beyond the
+integration guide. App Attest is stronger: the install attests once with Apple, and every request
+is then signed by a key in the Secure Enclave over the request's method, path, and body, so a
+captured request cannot be replayed or altered. There is no per-request round trip to Apple.
+
+To switch an app to App Attest:
+
+1. In the dashboard, open your app's **App Attest** tab and enter your Apple team ID and the app's
+   bundle ID. Then set each service's verification method to **App Attest**.
+2. In Xcode, add the **App Attest** capability to your target (Signing & Capabilities > + Capability).
+3. Pass `verificationMethod: .appAttest(appURL:)` to `AIProxy.configure`, with the app URL shown on
+   the App Attest tab (`https://api.aiproxy.com/<app>`, which is any of your service URLs without
+   its last segment):
+
+```swift
+import AIProxy
+
+@main
+struct MyApp: App {
+    init() {
+        AIProxy.configure(
+            logLevel: .debug,
+            printRequestBodies: false,
+            printResponseBodies: false,
+            resolveDNSOverTLS: true,
+            useStableID: true,
+            verificationMethod: .appAttest(appURL: "https://api.aiproxy.com/4f865a6d")
+        )
+    }
+    // ...
+}
+```
+
+`configure` starts the one-time registration with Apple and AIProxy (about a second) in the
+background right there at launch, so it never lands on the user's first request. All services in
+the same AIProxy app share one key, so it happens once per install however many providers you use.
+If you would rather know about a registration failure up front, `try await AIProxy.attestIfNeeded()`
+waits for it.
+
+Every service you create must be given its `serviceURL` (the `https://api.aiproxy.com/<project>/<service>`
+form); App Attest cannot be used with the legacy partial-key-only initializers.
+
+The SDK stores the attested key ID in the Keychain and reuses it for the life of the install. If
+AIProxy ever reports the key as unknown (for example after the app's App Attest configuration is
+reset), the SDK forgets it and attests again on the next request. If Apple reports the key as
+invalid, the SDK replaces it once and retries the signature.
+
+Errors specific to App Attest are cases of `AIProxyError`:
+
+- `.appAttestIsUnavailable`: the device has no Secure Enclave and no bypass token is set
+- `.appAttestBypassIsMissing`: running on the simulator without `AIPROXY_APP_ATTEST_BYPASS`
+- `.appAttestRequiresServiceURL`: a service was created without a `serviceURL`
+- `.appAttestRegistrationFailed(statusCode:responseBody:retryAfter:)`: AIProxy rejected the
+  registration; the body names the cause, most often a bundle ID that does not match the dashboard
+- `.appAttestRegistrationBackingOff(until:cause:)`: a recent registration failed and the SDK is waiting before retrying
+- `.appAttestKeyInvalidated`: Apple invalidated the key and a replacement could not be attested
+- `.appAttestKeychainError(status:)`: the key ID could not be read from or written to the Keychain
+
+If you make requests to AIProxy with your own networking stack, `AIProxyAppAttestClient` is public:
+`try AIProxyAppAttestClient.shared(for: serviceURL)` gives you `attestIfNeeded()` and `sign(&request)`.
+The wire contract it implements is documented at
+[Build your own client](https://www.aiproxy.com/docs/build-your-own-client.html#app-attest).
+
+
 ### How to catch Foundation errors for specific conditions
 
 We use Foundation's `URL` types such as `URLRequest` and `URLSession` for all connections to
@@ -7489,6 +7557,15 @@ The `AIPROXY_DEVICE_CHECK_BYPASS` is intended for the simulator only. Do not let
 a distribution build of your app (including a TestFlight distribution). If you follow the
 [integration steps](https://www.aiproxy.com/docs/integration-guide.html) we provide, then the
 constant won't leak because env variables are not packaged into the app bundle.
+
+## What is the `AIPROXY_APP_ATTEST_BYPASS` constant?
+
+The App Attest counterpart of `AIPROXY_DEVICE_CHECK_BYPASS`, for apps configured with
+`verificationMethod: .appAttest`. The simulator has no Secure Enclave and cannot attest, so the SDK
+sends this token in the `aiproxy-appattest-bypass` header instead. Copy it from the **App Attest**
+tab of your app in the dashboard into your Xcode scheme's environment variables, the same way the
+integration guide describes for the DeviceCheck bypass. It is intended for the simulator only and
+must not leak into a distribution build, including TestFlight.
 
 ## What is the `aiproxyPartialKey` constant?
 
