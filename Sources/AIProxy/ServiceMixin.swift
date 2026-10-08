@@ -17,30 +17,46 @@ extension ServiceMixin {
         return response.body
     }
 
-    // Existing header-returning APIs still use AIProxyError.unsuccessfulRequest for HTTP failures.
-    @AIProxyActor func makeRequestAndDeserializeResponseWithMetadata<T: Decodable & Sendable>(
-        _ request: URLRequest
-    ) async throws -> AIProxyResponseWithHeaders<T> {
-        do {
-            return try await self.makeRequestAndDeserializeResponseWithHTTPMetadata(request)
-        } catch let error as AIProxyHTTPError {
-            throw AIProxyError.unsuccessfulRequest(
-                statusCode: error.statusCode,
-                responseBody: error.responseBody
-            )
+    @AIProxyActor func makeRequestAndDeserializeResponseWithMetadata<T: Decodable & Sendable>(_ request: URLRequest) async throws -> AIProxyResponseWithHeaders<T> {
+        if AIProxy.printRequestBodies {
+            printRequestBody(request)
         }
+        let (data, httpResponse) = try await BackgroundNetworker.makeRequestAndWaitForData(
+            self.urlSession,
+            request
+        )
+        if AIProxy.printResponseBodies {
+            printBufferedResponseBody(data)
+        }
+        return AIProxyResponseWithHeaders(
+            body: try T.deserialize(from: data),
+            headers: httpResponse.readableHeaders
+        )
     }
 
+    /// Response retrieval preserves HTTP failure headers without changing existing request errors.
     @AIProxyActor func makeRequestAndDeserializeResponseWithHTTPMetadata<T: Decodable & Sendable>(
         _ request: URLRequest
     ) async throws -> AIProxyResponseWithHeaders<T> {
         if AIProxy.printRequestBodies {
             printRequestBody(request)
         }
-        let (data, httpResponse) = try await BackgroundNetworker.makeRequestAndWaitForDataWithHTTPMetadata(
-            self.urlSession,
-            request
+        let session = self.urlSession
+        let (data, response) = try await session.data(
+            for: request,
+            delegate: session.delegate as? URLSessionTaskDelegate
         )
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AIProxyError.assertion("Network response is not an http response")
+        }
+        if httpResponse.statusCode > 299 {
+            logIf(.error)?.error("Receieved a non-200 status code: \(httpResponse.statusCode)")
+            throw AIProxyHTTPError(
+                statusCode: httpResponse.statusCode,
+                responseBody: String(data: data, encoding: .utf8) ?? "",
+                headers: httpResponse.readableHeaders
+            )
+        }
         if AIProxy.printResponseBodies {
             printBufferedResponseBody(data)
         }

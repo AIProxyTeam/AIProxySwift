@@ -8,24 +8,8 @@ import Foundation
 
 struct BackgroundNetworker {
 
-    /// Existing buffered callers retain `AIProxyError.unsuccessfulRequest` for HTTP failures.
+    /// Throws AIProxyError.unsuccessfulRequest if the returned status code is non-200
     @AIProxyActor static func makeRequestAndWaitForData(
-        _ session: URLSession,
-        _ request: URLRequest,
-        _ progressCallback: (@Sendable (Double) -> Void)? = nil
-    ) async throws -> (Data, HTTPURLResponse) {
-        do {
-            return try await self.makeRequestAndWaitForDataWithHTTPMetadata(session, request, progressCallback)
-        } catch let error as AIProxyHTTPError {
-            throw AIProxyError.unsuccessfulRequest(
-                statusCode: error.statusCode,
-                responseBody: error.responseBody
-            )
-        }
-    }
-
-    /// Throws `AIProxyHTTPError` with the response body and headers for HTTP status codes of 300 or greater.
-    @AIProxyActor static func makeRequestAndWaitForDataWithHTTPMetadata(
         _ session: URLSession,
         _ request: URLRequest,
         _ progressCallback: (@Sendable (Double) -> Void)? = nil
@@ -42,10 +26,9 @@ struct BackgroundNetworker {
         }
         if httpResponse.statusCode > 299 {
             logIf(.error)?.error("Receieved a non-200 status code: \(httpResponse.statusCode)")
-            throw AIProxyHTTPError(
+            throw AIProxyError.unsuccessfulRequest(
                 statusCode: httpResponse.statusCode,
-                responseBody: String(data: data, encoding: .utf8) ?? "",
-                headers: httpResponse.readableHeaders
+                responseBody: String(data: data, encoding: .utf8) ?? ""
             )
         }
         return (data, httpResponse)
