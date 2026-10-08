@@ -7398,9 +7398,6 @@ the same AIProxy app share one key, so it happens once per install however many 
 If you would rather know about a registration failure up front, `try await AIProxy.attestIfNeeded()`
 waits for it.
 
-Every service you create must be given its `serviceURL` (the `https://api.aiproxy.com/<project>/<service>`
-form); App Attest cannot be used with the legacy partial-key-only initializers.
-
 The SDK stores the attested key ID in the Keychain and reuses it for the life of the install. If
 AIProxy ever reports the key as unknown (for example after the app's App Attest configuration is
 reset), the SDK forgets it and attests again on the next request. If Apple reports the key as
