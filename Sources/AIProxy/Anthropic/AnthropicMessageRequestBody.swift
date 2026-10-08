@@ -87,6 +87,11 @@ nonisolated public struct AnthropicMessageRequestBody: Encodable, Sendable {
     /// An object describing metadata about the request.
     public let metadata: AnthropicRequestMetadata?
 
+    /// Output configuration, currently the effort level (thinking depth and overall token use).
+    ///
+    /// Supported on Claude 4.6 and later. See https://docs.claude.com/en/docs/build-with-claude/effort
+    public let outputConfig: AnthropicOutputConfig?
+
     /// Determines whether to use priority capacity (if available) or standard capacity for this request.
     ///
     /// Anthropic offers different levels of service for your API requests.
@@ -123,11 +128,12 @@ nonisolated public struct AnthropicMessageRequestBody: Encodable, Sendable {
     /// Note that even with `temperature` of `0.0`, the results will not be fully deterministic.
     public let temperature: Double?
 
-    /// Configuration for enabling Claude's extended thinking.
+    /// Configuration for Claude's extended thinking.
     ///
-    /// When enabled, responses include `thinking` content blocks showing Claude's thinking process
-    /// before the final answer. Requires a minimum budget of 1,024 tokens and counts towards your
-    /// `max_tokens` limit.
+    /// When thinking is on, responses include `thinking` content blocks before the final answer,
+    /// and the thinking tokens count towards your `max_tokens` limit. Claude 4.6 and later run
+    /// adaptive thinking when this is omitted; see `AnthropicThinkingConfigParam` for which cases
+    /// each model generation accepts.
     public let thinking: AnthropicThinkingConfigParam?
 
     /// How the model should use the provided tools.
@@ -225,6 +231,7 @@ nonisolated public struct AnthropicMessageRequestBody: Encodable, Sendable {
 
         // Optional
         case metadata
+        case outputConfig = "output_config"
         case serviceTier = "service_tier"
         case stopSequences = "stop_sequences"
         case stream
@@ -245,6 +252,7 @@ nonisolated public struct AnthropicMessageRequestBody: Encodable, Sendable {
         messages: [AnthropicMessageParam],
         model: String,
         metadata: AnthropicRequestMetadata? = nil,
+        outputConfig: AnthropicOutputConfig? = nil,
         serviceTier: AnthropicServiceTierParam? = nil,
         stopSequences: [String]? = nil,
         stream: Bool? = nil,
@@ -260,6 +268,7 @@ nonisolated public struct AnthropicMessageRequestBody: Encodable, Sendable {
         self.messages = messages
         self.model = model
         self.metadata = metadata
+        self.outputConfig = outputConfig
         self.serviceTier = serviceTier
         self.stopSequences = stopSequences
         self.stream = stream
