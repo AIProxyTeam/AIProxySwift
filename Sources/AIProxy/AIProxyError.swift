@@ -56,6 +56,37 @@ nonisolated public enum AIProxyError: LocalizedError, Equatable, Sendable {
     /// The bypass token is needed on simulators only, where Apple's DeviceCheck is not available.
     case deviceCheckBypassIsMissing
 
+    /// App Attest is not supported on this device (the Simulator, or hardware without a Secure Enclave)
+    /// and no `AIPROXY_APP_ATTEST_BYPASS` token is set. Raised only when the SDK is configured with
+    /// `verificationMethod: .appAttest`.
+    case appAttestIsUnavailable
+
+    /// Raised from the iOS simulator if the `AIPROXY_APP_ATTEST_BYPASS` token is not set.
+    /// App Attest does not exist on simulators, so the bypass token stands in for it during development.
+    case appAttestBypassIsMissing
+
+    /// App Attest needs the app and service segments of a `serviceURL` to find its attestation routes.
+    /// Raised when a service was created without a `serviceURL` (the legacy `api.aiproxy.pro` form).
+    case appAttestRequiresServiceURL
+
+    /// Apple reported the device's App Attest key as invalid, and attesting a replacement also failed.
+    case appAttestKeyInvalidated
+
+    /// AIProxy answered the App Attest challenge or register route with a non-2xx status.
+    /// The body names the cause (for example a bundle ID that does not match the dashboard).
+    /// `retryAfter` is set when the server sent `Retry-After`.
+    case appAttestRegistrationFailed(statusCode: Int, responseBody: String, retryAfter: TimeInterval?)
+
+    /// A recent App Attest registration failed, and the SDK is waiting before trying again.
+    /// `cause` describes the failure that started the backoff.
+    case appAttestRegistrationBackingOff(until: Date, cause: String)
+
+    /// AIProxy answered an attestation route with a body the SDK could not interpret.
+    case appAttestMalformedResponse(route: String)
+
+    /// Reading or writing the App Attest key ID in the Keychain failed.
+    case appAttestKeychainError(status: Int32)
+
     public var errorDescription: String? {
         switch self {
         case .assertion(let message):
@@ -66,6 +97,22 @@ nonisolated public enum AIProxyError: LocalizedError, Equatable, Sendable {
             return "AIProxy - Apple's DeviceCheck is not available on this device. Please make sure you are connected to the internet and your system clock is accurately set."
         case .deviceCheckBypassIsMissing:
             return "AIProxy - You are running on a simulator without setting the AIPROXY_DEVICE_CHECK_BYPASS env variable. Please see the integration guide for instructions on setting AIPROXY_DEVICE_CHECK_BYPASS: https://www.aiproxy.com/docs/integration-guide.html"
+        case .appAttestIsUnavailable:
+            return "AIProxy - Apple's App Attest is not available on this device, and no AIPROXY_APP_ATTEST_BYPASS env variable is set. App Attest requires a physical device with a Secure Enclave."
+        case .appAttestBypassIsMissing:
+            return "AIProxy - You are running on a simulator without setting the AIPROXY_APP_ATTEST_BYPASS env variable. Copy the bypass token from the App Attest tab of the AIProxy dashboard into your Xcode scheme's environment variables."
+        case .appAttestRequiresServiceURL:
+            return "AIProxy - App Attest needs the AIProxy app: pass the appURL shown on the App Attest tab of the dashboard (https://api.aiproxy.com/<app>) to AIProxy.configure, and the serviceURL shown for each service when creating it. The legacy partial-key-only initializers cannot use App Attest."
+        case .appAttestKeyInvalidated:
+            return "AIProxy - Apple reported this device's App Attest key as invalid and a replacement could not be attested. Please check your network connection and try again."
+        case .appAttestRegistrationFailed(statusCode: let statusCode, responseBody: let responseBody, retryAfter: _):
+            return "AIProxy - App Attest registration failed with status code \(statusCode) and response body: \(responseBody)"
+        case .appAttestRegistrationBackingOff(until: let until, cause: let cause):
+            return "AIProxy - App Attest registration is backing off until \(until) after a failure: \(cause)"
+        case .appAttestMalformedResponse(route: let route):
+            return "AIProxy - The App Attest \(route) response could not be parsed."
+        case .appAttestKeychainError(status: let status):
+            return "AIProxy - Could not read or write the App Attest key ID in the Keychain (OSStatus \(status))."
         }
 
     }

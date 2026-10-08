@@ -11,6 +11,7 @@ nonisolated struct AIProxyConfiguration {
     let printRequestBodies: Bool
     let printResponseBodies: Bool
     let useStableID: Bool
+    let verificationMethod: AIProxyVerificationMethod
     var stableID: String?
 
     @AIProxyActor static internal func getStableIdentifier() async -> String? {

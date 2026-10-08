@@ -26,9 +26,11 @@ struct BackgroundNetworker {
         }
         if httpResponse.statusCode > 299 {
             logIf(.error)?.error("Receieved a non-200 status code: \(httpResponse.statusCode)")
+            let responseBody = String(data: data, encoding: .utf8) ?? ""
+            AIProxyAppAttestClient.noteRejection(responseBody: responseBody, requestURL: request.url)
             throw AIProxyError.unsuccessfulRequest(
                 statusCode: httpResponse.statusCode,
-                responseBody: String(data: data, encoding: .utf8) ?? ""
+                responseBody: responseBody
             )
         }
         return (data, httpResponse)
@@ -53,6 +55,7 @@ struct BackgroundNetworker {
             for try await line in asyncBytes.lines {
                 responseBody += line
             }
+            AIProxyAppAttestClient.noteRejection(responseBody: responseBody, requestURL: request.url)
             throw AIProxyError.unsuccessfulRequest(
                 statusCode: httpResponse.statusCode,
                 responseBody: responseBody
@@ -136,9 +139,11 @@ struct BackgroundNetworker {
                     return
                 }
                 if dataTaskBridge.isBadStatusCode {
+                    let responseBody = String(data: dataTaskBridge.accumulatedErrorBody, encoding: .utf8) ?? ""
+                    AIProxyAppAttestClient.noteRejection(responseBody: responseBody, requestURL: request.url)
                     let err = AIProxyError.unsuccessfulRequest(
                         statusCode: dataTaskBridge.statusCode,
-                        responseBody: String(data: dataTaskBridge.accumulatedErrorBody, encoding: .utf8) ?? ""
+                        responseBody: responseBody
                     )
                     dataTaskBridge.responseDelivered = true
                     continuation.resume(throwing: err)
