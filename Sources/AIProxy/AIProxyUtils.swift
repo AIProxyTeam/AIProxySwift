@@ -206,6 +206,24 @@ enum AIProxyUtils {
         return transactionID
         #endif
     }
+
+    /// Parses the project and service from the client's `serviceURL`
+    nonisolated static func serviceIdentifiers(
+        from serviceURL: String
+    ) throws -> (project: String, service: String) {
+        guard let components = URLComponents(string: serviceURL) else {
+            throw AIProxyError.assertion("Could not parse the AIProxy serviceURL")
+        }
+
+        let pathComponents = components.path.split(separator: "/", omittingEmptySubsequences: true)
+        guard pathComponents.count == 2 else {
+            throw AIProxyError.assertion(
+                "Expected the AIProxy serviceURL path to contain a project and service identifier"
+            )
+        }
+
+        return (String(pathComponents[0]), String(pathComponents[1]))
+    }
 }
 
 #if canImport(AppKit) && !targetEnvironment(macCatalyst)

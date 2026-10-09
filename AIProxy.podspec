@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name         = 'AIProxy'
-  s.version      = '0.153.0'
+  s.version      = '0.156.0'
   s.summary      = 'AIProxy Swift SDK for secure AI integrations'
   s.description  = 'Access OpenAI, Anthropic, and other AI providers securely without exposing API keys in your app. See https://www.aiproxy.com for more'
   s.homepage     = 'https://github.com/lzell/AIProxySwift'

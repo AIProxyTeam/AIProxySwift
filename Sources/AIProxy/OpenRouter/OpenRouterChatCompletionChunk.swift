@@ -84,6 +84,10 @@ extension OpenRouterChatCompletionChunk.Choice {
 extension OpenRouterChatCompletionChunk.Choice.Delta {
     nonisolated public struct ToolCall: Codable, Sendable {
         public let index: Int?
+
+        /// The ID of the tool call, sent in the first fragment of each streamed tool call.
+        public let id: String?
+
         /// The function that the model instructs us to call
         public let function: Function?
     }

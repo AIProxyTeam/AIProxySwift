@@ -12,8 +12,8 @@ import Foundation
 nonisolated public struct ElevenLabsSpeechToTextRequestBody: MultipartFormEncodable {
     // Required
 
-    /// The ID of the model to use for transcription, currently only `scribe_v1` and
-    /// `scribe_v1_experimental` are available.
+    /// The ID of the model to use for transcription, currently `scribe_v1` and
+    /// `scribe_v2` are available.
     public let modelID: ModelID
 
     // Optional
@@ -85,6 +85,7 @@ extension ElevenLabsSpeechToTextRequestBody {
     nonisolated public enum ModelID: String, Encodable, Sendable {
         case scribeV1 = "scribe_v1"
         case scribeV1Experimental = "scribe_v1_experimental"
+        case scribeV2 = "scribe_v2"
     }
 
     nonisolated public enum TimestampGranularity: String, Encodable, Sendable {

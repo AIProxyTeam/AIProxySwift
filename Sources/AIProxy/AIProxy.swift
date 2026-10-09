@@ -8,7 +8,7 @@ import UIKit
 public enum AIProxy {
 
     /// The current sdk version
-    nonisolated public static let sdkVersion = "0.153.0"
+    nonisolated public static let sdkVersion = "0.156.0"
 
     /// Configures the AIProxy SDK. Call this during app launch by adding an `init` to your SwiftUI MyApp.swift file, e.g.
     ///
@@ -738,12 +738,16 @@ public enum AIProxy {
     ///
     /// - Parameters:
     ///   - unprotectedAPIKey: Your Mistral API key
-    /// - Returns: An instance of  MistralService configured and ready to make requests
+    ///   - baseURL: An optional base URL to use for requests. If not provided, the default Mistral API
+    ///     base URL is used (`https://api.mistral.ai`).
+    /// - Returns: An instance of MistralService configured and ready to make requests
     nonisolated public static func mistralDirectService(
-        unprotectedAPIKey: String
+        unprotectedAPIKey: String,
+        baseURL: String? = nil
     ) -> MistralService {
         return MistralDirectService(
-            unprotectedAPIKey: unprotectedAPIKey
+            unprotectedAPIKey: unprotectedAPIKey,
+            baseURL: baseURL
         )
     }
 
@@ -969,6 +973,37 @@ public enum AIProxy {
         return BraveDirectService(
             unprotectedAPIKey: unprotectedAPIKey
         )
+    }
+
+    /// Returns the authentication and routing metadata needed to send an existing gRPC call through AIProxy.
+    ///
+    /// Add the returned key-value pairs to the metadata on your gRPC call. Your gRPC client remains responsible
+    /// for the transport, method path, serialization, and response handling.
+    ///
+    /// - Parameters:
+    ///   - partialKey: Your partial key from the AIProxy developer dashboard.
+    ///   - serviceURL: Your service URL from the AIProxy developer dashboard.
+    ///   - clientID: An optional client ID used to attribute requests to a specific user or device.
+    /// - Returns: The metadata fields expected by the AIProxy gRPC endpoint.
+    nonisolated public static func grpcMetadata(
+        partialKey: String,
+        serviceURL: String,
+        clientID: String? = nil
+    ) async throws -> [String: String] {
+        let identifiers = try AIProxyUtils.serviceIdentifiers(from: serviceURL)
+        let request = try await self.request(
+            partialKey: partialKey,
+            serviceURL: serviceURL,
+            clientID: clientID,
+            proxyPath: "/"
+        )
+
+        var metadata = (request.allHTTPHeaderFields ?? [:]).reduce(into: [String: String]()) {
+            $0[$1.key.lowercased()] = $1.value
+        }
+        metadata["aiproxy-project"] = identifiers.project
+        metadata["aiproxy-service"] = identifiers.service
+        return metadata.filter { $0.key.hasPrefix("aiproxy-") }
     }
 
 #if canImport(AppKit) && !targetEnvironment(macCatalyst)

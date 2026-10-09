@@ -19,11 +19,11 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
         body: Encodable,
         secondsToWait: UInt,
         additionalHeaders: [String: String],
-        baseURLOverride: String?
+        baseURLOverride permittedUpstream: String?
     ) async throws -> URLRequest {
         var additionalHeaders = additionalHeaders
-        if let baseURLOverride = baseURLOverride {
-            additionalHeaders["aiproxy-base-url"] = baseURLOverride
+        if let permittedUpstream {
+            additionalHeaders["aiproxy-permitted-upstream"] = permittedUpstream
         }
         return try await AIProxyURLRequest.create(
             partialKey: self.partialKey,
@@ -43,11 +43,11 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
         body: MultipartFormEncodable,
         secondsToWait: UInt,
         additionalHeaders: [String : String],
-        baseURLOverride: String?
+        baseURLOverride permittedUpstream: String?
     ) async throws -> URLRequest {
         var additionalHeaders = additionalHeaders
-        if let baseURLOverride = baseURLOverride {
-            additionalHeaders["aiproxy-base-url"] = baseURLOverride
+        if let permittedUpstream {
+            additionalHeaders["aiproxy-permitted-upstream"] = permittedUpstream
         }
         let boundary = UUID().uuidString
         return try await AIProxyURLRequest.create(
@@ -67,11 +67,11 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
         path: String,
         secondsToWait: UInt,
         additionalHeaders: [String : String],
-        baseURLOverride: String?
+        baseURLOverride permittedUpstream: String?
     ) async throws -> URLRequest {
         var additionalHeaders = additionalHeaders
-        if let baseURLOverride = baseURLOverride {
-            additionalHeaders["aiproxy-base-url"] = baseURLOverride
+        if let permittedUpstream {
+            additionalHeaders["aiproxy-permitted-upstream"] = permittedUpstream
         }
         return try await AIProxyURLRequest.create(
             partialKey: self.partialKey,
@@ -89,11 +89,11 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
         path: String,
         secondsToWait: UInt,
         additionalHeaders: [String : String],
-        baseURLOverride: String?
+        baseURLOverride permittedUpstream: String?
     ) async throws -> URLRequest {
         var additionalHeaders = additionalHeaders
-        if let baseURLOverride = baseURLOverride {
-            additionalHeaders["aiproxy-base-url"] = baseURLOverride
+        if let permittedUpstream {
+            additionalHeaders["aiproxy-permitted-upstream"] = permittedUpstream
         }
         return try await AIProxyURLRequest.create(
             partialKey: self.partialKey,

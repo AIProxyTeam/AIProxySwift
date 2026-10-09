@@ -29,6 +29,56 @@ final class AnthropicMessageRequestTests: XCTestCase {
         )
     }
 
+    func testRequestWithAdaptiveThinkingAndEffortIsEncodable() throws {
+        let request = AnthropicMessageRequestBody(
+            maxTokens: 16000,
+            messages: [
+                AnthropicMessageParam(content: [.textBlock(AnthropicTextBlockParam(text: "hello world"))], role: .user)
+            ],
+            model: "claude-sonnet-5-5",
+            outputConfig: AnthropicOutputConfig(effort: .medium),
+            thinking: .adaptive
+        )
+        XCTAssertEqual(
+            #"{"max_tokens":16000,"messages":[{"content":[{"text":"hello world","type":"text"}],"role":"user"}],"model":"claude-sonnet-5-5","output_config":{"effort":"medium"},"thinking":{"type":"adaptive"}}"#
+            ,
+            try request.serialize()
+        )
+    }
+
+    func testRequestWithBetweenToolsThinkingIsEncodable() throws {
+        let request = AnthropicMessageRequestBody(
+            maxTokens: 1024,
+            messages: [
+                AnthropicMessageParam(content: [.textBlock(AnthropicTextBlockParam(text: "hello world"))], role: .user)
+            ],
+            model: "claude-sonnet-5-5",
+            outputConfig: AnthropicOutputConfig(effort: .low),
+            thinking: .betweenTools
+        )
+        XCTAssertEqual(
+            #"{"max_tokens":1024,"messages":[{"content":[{"text":"hello world","type":"text"}],"role":"user"}],"model":"claude-sonnet-5-5","output_config":{"effort":"low"},"thinking":{"type":"between_tools"}}"#
+            ,
+            try request.serialize()
+        )
+    }
+
+    func testEmptyOutputConfigEncodesAsEmptyObject() throws {
+        let request = AnthropicMessageRequestBody(
+            maxTokens: 1024,
+            messages: [
+                AnthropicMessageParam(content: [.textBlock(AnthropicTextBlockParam(text: "hi"))], role: .user)
+            ],
+            model: "claude-sonnet-5-5",
+            outputConfig: AnthropicOutputConfig()
+        )
+        XCTAssertEqual(
+            #"{"max_tokens":1024,"messages":[{"content":[{"text":"hi","type":"text"}],"role":"user"}],"model":"claude-sonnet-5-5","output_config":{}}"#
+            ,
+            try request.serialize()
+        )
+    }
+
     func testRequestWithToolUseIsEncodable() throws {
         let request = AnthropicMessageRequestBody(
             maxTokens: 1024,
