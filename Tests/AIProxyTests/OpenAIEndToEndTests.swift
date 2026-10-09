@@ -26,14 +26,14 @@ final class OpenAIEndToEndTests: XCTestCase {
         do {
             _ = try await service.chatCompletionRequest(body: body)
             XCTFail("We expected a raised error")
-        } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+        } catch let error as AIProxyHTTPError {
             XCTAssertEqual(
                 #"{"error":{"message":"Could not infer required project properties from your requests"}}"#,
-                responseBody
+                error.responseBody
             )
-            XCTAssertEqual(400, statusCode)
+            XCTAssertEqual(400, error.statusCode)
         } catch {
-            XCTFail("We expected an AIProxyError")
+            XCTFail("We expected an AIProxyHTTPError")
         }
     }
 
