@@ -11,7 +11,7 @@ import Foundation
 ///
 /// Every REST operation throws `AIProxyHTTPError` for HTTP status codes of 300 or
 /// greater, preserving the original response body bytes and headers. This includes
-/// streaming establishment and deprecated forwarding methods. Callers previously
+/// requests that start a stream and deprecated forwarding methods. Callers previously
 /// catching `AIProxyError.unsuccessfulRequest` for OpenAI REST failures must catch
 /// `AIProxyHTTPError` instead. Transport and decoding errors retain their types.
 @AIProxyActor public class OpenAIService: Sendable {
@@ -371,9 +371,7 @@ import Foundation
         guard !responseID.isEmpty, responseID != ".", responseID != ".." else {
             throw AIProxyError.assertion("Response IDs must not be empty or dot path segments")
         }
-        // Only unreserved characters may remain literal in an opaque path segment.
-        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
-        guard let encodedID = responseID.addingPercentEncoding(withAllowedCharacters: allowed),
+        guard let encodedID = AIProxyUtils.percentEncodePathSegment(responseID),
               var components = URLComponents(string: self.resolvedPath("responses/\(encodedID)")) else {
             throw AIProxyError.assertion("Response IDs must be URL encodable")
         }
@@ -403,7 +401,7 @@ import Foundation
     ///   - additionalHeaders: Optional headers to pass up with the request alongside the lib's default headers
     /// - Returns: An async sequence of response chunks. See this reference:
     ///            https://platform.openai.com/docs/api-reference/responses/streaming
-    /// - Throws: `AIProxyHTTPError` with the status code, original body bytes and headers if streaming establishment returns an HTTP status code of 300 or greater.
+    /// - Throws: `AIProxyHTTPError` with the status code, original body bytes and headers if the initial streaming request returns an HTTP status code of 300 or greater.
     ///   This applies regardless of `background`, as for every OpenAI REST operation. Transport errors retain their types.
     public func createStreamingResponse(
         requestBody: OpenAICreateResponseRequestBody,
@@ -750,6 +748,7 @@ import Foundation
         }
         if httpResponse.statusCode > 299 {
             var responseData = Data()
+            // Preserve responseData exactly, including line endings and non-UTF-8 bytes.
             for try await byte in asyncBytes {
                 responseData.append(byte)
             }

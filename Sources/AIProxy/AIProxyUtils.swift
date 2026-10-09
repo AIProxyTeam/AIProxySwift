@@ -207,6 +207,12 @@ enum AIProxyUtils {
         #endif
     }
 
+    /// Percent-encodes an opaque path segment, leaving only unreserved characters literal.
+    nonisolated static func percentEncodePathSegment(_ value: String) -> String? {
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed)
+    }
+
     /// Parses the project and service from the client's `serviceURL`
     nonisolated static func serviceIdentifiers(
         from serviceURL: String

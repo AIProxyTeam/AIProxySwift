@@ -30,7 +30,7 @@ nonisolated public struct AIProxyChunkStreamResponse<Chunk: Sendable>: Sendable 
     }
 }
 
-/// An HTTP failure returned by any OpenAI REST operation, including streaming establishment.
+/// An HTTP failure returned by any OpenAI REST operation, including requests that start a stream.
 /// OpenAI REST callers previously catching `AIProxyError.unsuccessfulRequest` must catch this type instead.
 /// Header field names should be compared case-insensitively.
 nonisolated public struct AIProxyHTTPError: LocalizedError, Sendable {
