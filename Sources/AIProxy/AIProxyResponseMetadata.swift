@@ -35,7 +35,8 @@ nonisolated public struct AIProxyChunkStreamResponse<Chunk: Sendable>: Sendable 
 /// Header field names should be compared case-insensitively.
 nonisolated public struct AIProxyHTTPError: LocalizedError, Sendable {
     public let statusCode: Int
-    /// The original HTTP response body bytes, including non-UTF-8 content.
+    /// The HTTP error body. Buffered requests retain the original bytes.
+    /// Streaming requests contain UTF-8 text with line endings removed.
     public let responseData: Data
     public let headers: [String: String]
 

@@ -1547,8 +1547,9 @@ while the status is `.queued` or `.inProgress`; your code owns polling and retri
 Generation failures are response data (`body.error` or `body.incompleteDetails`).
 OpenAI REST HTTP failures, including creation, initial streaming and GET, throw
 `AIProxyHTTPError`: inspect
-`statusCode`, `headers`, UTF-8 `responseBody` or exact `responseData` bytes. Transport
-and decoding errors keep their original types.
+`statusCode`, `headers`, UTF-8 `responseBody` or `responseData`. Buffered errors retain
+the original bytes; initial streaming errors retain the existing text format with
+line endings removed. Transport and decoding errors keep their original types.
 
 Recovery requires a known ID and retained data. The example requests storage with
 `store: true`; check the [OpenAI background guide](https://developers.openai.com/api/docs/guides/background)

@@ -5,7 +5,7 @@ import Testing
 
 @Suite("OpenAI provider HTTP transport")
 struct OpenAIProviderHTTPTests {
-    @Test("OA-HTTP-02: JSON, multipart, raw audio and SSE expose the same exact failure evidence",
+    @Test("OA-HTTP-02: JSON, multipart, raw audio and SSE expose rich HTTP failures",
           arguments: providerHTTPFailures, ProviderHTTPOperation.allCases)
     @AIProxyActor func httpFailure(failure: ResponseHTTPFailure, operation: ProviderHTTPOperation) async throws {
         for proxied in [false, true] {
@@ -15,7 +15,13 @@ struct OpenAIProviderHTTPTests {
                 try await operation.submit(fixture.makeOpenAIService(proxied: proxied))
                 Issue.record("HTTP rejection returned a successful value or stream for \(operation)")
             } catch let error as AIProxyHTTPError {
-                expectHTTPError(error, status: failure.status, data: failure.data, text: failure.text, headers: failure.headers)
+                let streaming = operation == .chatStream || operation == .transcriptionStream
+                expectHTTPError(
+                    error, status: failure.status,
+                    data: streaming ? failure.streamingData : failure.data,
+                    text: streaming ? failure.streamingText : failure.text,
+                    headers: failure.headers
+                )
             } catch {
                 Issue.record("Expected provider-wide AIProxyHTTPError for \(operation), received \(error)")
             }

@@ -10,7 +10,7 @@ import Foundation
 /// OpenAI REST operations and Realtime sessions.
 ///
 /// Every REST operation throws `AIProxyHTTPError` for HTTP status codes of 300 or
-/// greater, preserving the original response body bytes and headers. This includes
+/// greater, exposing the response body and headers. This includes
 /// requests that start a stream and deprecated forwarding methods. Callers previously
 /// catching `AIProxyError.unsuccessfulRequest` for OpenAI REST failures must catch
 /// `AIProxyHTTPError` instead. Transport and decoding errors retain their types.
@@ -401,7 +401,8 @@ import Foundation
     ///   - additionalHeaders: Optional headers to pass up with the request alongside the lib's default headers
     /// - Returns: An async sequence of response chunks. See this reference:
     ///            https://platform.openai.com/docs/api-reference/responses/streaming
-    /// - Throws: `AIProxyHTTPError` with the status code, original body bytes and headers if the initial streaming request returns an HTTP status code of 300 or greater.
+    /// - Throws: `AIProxyHTTPError` with the status code, response body text and headers if the initial streaming request returns an HTTP status code of 300 or greater.
+    ///   Error-body line endings are removed, matching the existing streaming behavior.
     ///   This applies regardless of `background`, as for every OpenAI REST operation. Transport errors retain their types.
     public func createStreamingResponse(
         requestBody: OpenAICreateResponseRequestBody,
@@ -747,14 +748,14 @@ import Foundation
             throw AIProxyError.assertion("Network response is not an http response")
         }
         if httpResponse.statusCode > 299 {
-            var responseData = Data()
-            // Preserve responseData exactly, including line endings and non-UTF-8 bytes.
-            for try await byte in asyncBytes {
-                responseData.append(byte)
+            var responseBody = ""
+            // Keep the existing text format for streaming HTTP errors.
+            for try await line in asyncBytes.lines {
+                responseBody += line
             }
             throw AIProxyHTTPError(
                 statusCode: httpResponse.statusCode,
-                responseData: responseData,
+                responseData: Data(responseBody.utf8),
                 headers: httpResponse.readableHeaders
             )
         }

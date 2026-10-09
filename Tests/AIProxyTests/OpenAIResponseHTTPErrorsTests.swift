@@ -5,7 +5,7 @@ import Testing
 
 @Suite("OpenAI Responses HTTP diagnostics")
 struct OpenAIResponseHTTPErrorsTests {
-    @Test("HTTP-01: creation exposes exact HTTP failure evidence before returning a stream",
+    @Test("HTTP-01: creation exposes rich HTTP failures before returning a value or stream",
           arguments: responseHTTPFailures, ResponseCreation.allCases)
     @AIProxyActor func creationHTTPFailure(failure: ResponseHTTPFailure, creation: ResponseCreation) async throws {
         for proxied in [false, true] {
@@ -18,7 +18,12 @@ struct OpenAIResponseHTTPErrorsTests {
                 try await creation.submit(service)
                 Issue.record("HTTP rejection returned a response or a stream")
             } catch let error as AIProxyHTTPError {
-                expectHTTPError(error, status: failure.status, data: failure.data, text: failure.text, headers: failure.headers)
+                expectHTTPError(
+                    error, status: failure.status,
+                    data: creation == .streaming ? failure.streamingData : failure.data,
+                    text: creation == .streaming ? failure.streamingText : failure.text,
+                    headers: failure.headers
+                )
             } catch {
                 Issue.record("Expected AIProxyHTTPError, received \(error)")
             }
@@ -45,7 +50,8 @@ struct OpenAIResponseHTTPErrorsTests {
                 try await creation.submit(service, requestBody: requestBody)
                 Issue.record("Expected HTTP rejection")
             } catch let error as AIProxyHTTPError {
-                expectHTTPError(error, status: 429, data: data, text: "rate limit\nfixture detail\n", headers: headers)
+                let text = creation == .streaming ? "rate limitfixture detail" : "rate limit\nfixture detail\n"
+                expectHTTPError(error, status: 429, data: creation == .streaming ? Data(text.utf8) : data, text: text, headers: headers)
             } catch {
                 Issue.record("Expected background-independent AIProxyHTTPError, received \(error)")
             }
@@ -105,7 +111,8 @@ struct OpenAIResponseHTTPErrorsTests {
                 try await method.submit(service)
                 Issue.record("Deprecated forwarding concealed the HTTP rejection")
             } catch let error as AIProxyHTTPError {
-                expectHTTPError(error, status: 429, data: data, text: "", headers: headers)
+                let text = method == .buffered ? "" : "\u{0000}\u{FFFD}"
+                expectHTTPError(error, status: 429, data: method == .buffered ? data : Data(text.utf8), text: text, headers: headers)
             } catch {
                 Issue.record("Expected AIProxyHTTPError from deprecated forwarding, received \(error)")
             }
@@ -335,18 +342,22 @@ struct ResponseHTTPFailure: Sendable {
     let data: Data
     let text: String
     let headers: [String: String]
+    // Fixed Foundation line-decoding goldens for initial streaming HTTP rejections.
+    // Buffered errors continue using the unmodified data and text above.
+    let streamingText: String
+    var streamingData: Data { Data(streamingText.utf8) }
 }
 
 let responseHTTPFailures: [ResponseHTTPFailure] = [
-    .init(status: 300, data: Data("multiple choices".utf8), text: "multiple choices", headers: ["X-Request-ID": "req300"]),
-    .init(status: 302, data: Data("redirect body\r\n".utf8), text: "redirect body\r\n", headers: ["X-Request-ID": "req302", "Retry-After": "7"]),
-    .init(status: 400, data: Data(#"{"error":{"message":"fixture bad request"}}"#.utf8), text: #"{"error":{"message":"fixture bad request"}}"#, headers: ["X-Request-ID": "req400"]),
-    .init(status: 401, data: Data("unauthorized\nfixture detail\n".utf8), text: "unauthorized\nfixture detail\n", headers: ["X-Request-ID": "req401", "Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"]),
-    .init(status: 403, data: Data("forbidden ✓".utf8), text: "forbidden ✓", headers: ["X-Request-ID": "req403"]),
-    .init(status: 404, data: Data(), text: "", headers: ["X-Request-ID": "req404"]),
-    .init(status: 429, data: Data([0x00, 0xff, 0xfe, 0x0a]), text: "", headers: ["X-Request-ID": "req429", "Retry-After": "11"]),
-    .init(status: 500, data: Data("first line\nsecond line\n".utf8), text: "first line\nsecond line\n", headers: ["X-Request-ID": "req500"]),
-    .init(status: 503, data: Data("unavailable: non-JSON body".utf8), text: "unavailable: non-JSON body", headers: ["X-Request-ID": "req503", "Retry-After": "3"])
+    .init(status: 300, data: Data("multiple choices".utf8), text: "multiple choices", headers: ["X-Request-ID": "req300"], streamingText: "multiple choices"),
+    .init(status: 302, data: Data("redirect body\r\n".utf8), text: "redirect body\r\n", headers: ["X-Request-ID": "req302", "Retry-After": "7"], streamingText: "redirect body"),
+    .init(status: 400, data: Data(#"{"error":{"message":"fixture bad request"}}"#.utf8), text: #"{"error":{"message":"fixture bad request"}}"#, headers: ["X-Request-ID": "req400"], streamingText: #"{"error":{"message":"fixture bad request"}}"#),
+    .init(status: 401, data: Data("unauthorized\nfixture detail\n".utf8), text: "unauthorized\nfixture detail\n", headers: ["X-Request-ID": "req401", "Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"], streamingText: "unauthorizedfixture detail"),
+    .init(status: 403, data: Data("forbidden ✓".utf8), text: "forbidden ✓", headers: ["X-Request-ID": "req403"], streamingText: "forbidden ✓"),
+    .init(status: 404, data: Data(), text: "", headers: ["X-Request-ID": "req404"], streamingText: ""),
+    .init(status: 429, data: Data([0x00, 0xff, 0xfe, 0x0a]), text: "", headers: ["X-Request-ID": "req429", "Retry-After": "11"], streamingText: "\u{0000}\u{FFFD}\u{FFFD}"),
+    .init(status: 500, data: Data("first line\nsecond line\n".utf8), text: "first line\nsecond line\n", headers: ["X-Request-ID": "req500"], streamingText: "first linesecond line"),
+    .init(status: 503, data: Data("unavailable: non-JSON body".utf8), text: "unavailable: non-JSON body", headers: ["X-Request-ID": "req503", "Retry-After": "3"], streamingText: "unavailable: non-JSON body")
 ]
 
 func expectHTTPError(_ error: AIProxyHTTPError, status: Int, data: Data, text: String, headers: [String: String]) {
