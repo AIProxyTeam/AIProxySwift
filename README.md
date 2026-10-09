@@ -1385,14 +1385,11 @@ final class RealtimeManager {
             inputAudioFormat: .pcm16,
             inputAudioTranscription: .init(model: "whisper-1"),
             instructions: "You are a tour guide of Yosemite national park",
-            maxResponseOutputTokens: .int(4096),
-            modalities: [.audio],
+            maxOutputTokens: .int(4096),
+            outputModalities: [.audio],
             outputAudioFormat: .pcm16,
-            temperature: 0.7,
-            turnDetection: .init(
-                type: .semanticVAD(eagerness: .medium)
-            ),
-            voice: "shimmer"
+            turnDetection: .semanticVAD(.init(eagerness: .medium)),
+            voice: .builtin("shimmer")
         )
 
         let realtimeSession = try await openAIService.realtimeSession(
@@ -1450,21 +1447,22 @@ final class RealtimeManager {
 }
 ```
 
-#### General Availability (GA) Realtime migration notes
+#### Current Realtime API notes
 
-- OpenAI has announced Realtime beta (`OpenAI-Beta: realtime=v1`) deprecation and shutdown on 2026-05-07.
-- For `response.create`, GA uses `output_modalities` (not `modalities`).
-- The new `output_modalities` for OpenAI realtime GA (general availability) is as follows:
+- For a field-by-field mapping of the Realtime wire shape to AIProxySwift types, see
+  [Realtime schema matrix](Documentation/OpenAI/RealtimeSchemaMatrix.md).
+- For `response.create`, the current Realtime API uses `output_modalities` (not `modalities`).
+- `output_modalities` is as follows:
   - `["audio"]` returns audio with transcript.
   - `["text"]` returns text only.
-- For voice mode with built-in web search, use GA tool (`.webSearch`) and specify `.auto` for toolChoice to let the model decide when to use it.
+- For voice mode with built-in web search, use the `.webSearch` tool and specify `.auto` for `toolChoice` to let the model decide when to use it.
 
 ```swift
 let configuration = OpenAIRealtimeSessionConfiguration(
     outputModalities: [.audio],
-    voice: .builtin("alloy"),
     tools: [.webSearch(.init(searchContextSize: .medium))],
-    toolChoice: .auto
+    toolChoice: .auto,
+    voice: .builtin("alloy")
 )
 
 let session = try await openAIService.realtimeSession(
@@ -1472,6 +1470,57 @@ let session = try await openAIService.realtimeSession(
     configuration: configuration,
     logLevel: .info
 )
+```
+
+#### Realtime Reasoning models
+
+OpenAI's Realtime Reasoning models, such as `gpt-realtime-2`, use the same Realtime WebSocket
+transport and shared session fields as Performance models like `gpt-realtime-1.5`, plus
+Reasoning-only configuration for effort and parallel tool calls.
+Omit `reasoning` to leave the effort unspecified.
+
+```swift
+let configuration = OpenAIRealtimeSessionConfiguration(
+    outputModalities: [.audio],
+    tools: [.webSearch(.init(searchContextSize: .medium))],
+    toolChoice: .auto,
+    voice: .builtin("alloy"),
+    reasoning: .low,
+    parallelToolCalls: true
+)
+
+let session = try await openAIService.realtimeSession(
+    model: "gpt-realtime-2",
+    configuration: configuration,
+    logLevel: .info
+)
+```
+
+You can also override Reasoning settings for a single response:
+
+```swift
+await session.sendMessage(
+    OpenAIRealtimeResponseCreate(
+        response: .init(
+            instructions: "Use the lowest sufficient reasoning effort.",
+            outputModalities: [.audio],
+            reasoning: .minimal,
+            parallelToolCalls: false
+        )
+    )
+)
+```
+
+Realtime Reasoning responses can include phased output. Use `phase` to separate short commentary
+from the final answer when the model emits both in a turn:
+
+```swift
+for await message in session.receiver {
+    if case .responseDone(let event) = message {
+        let commentary = event.output?.filter { $0.phase == .commentary }
+        let finalAnswer = event.output?.filter { $0.phase == .finalAnswer }
+    }
+}
 ```
 
 ### How to make a basic request using OpenAI's Responses API

@@ -25,4 +25,11 @@ nonisolated public struct OpenAIRealtimeSessionUpdate: Encodable {
         self.eventId = eventId
         self.session = session
     }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(eventId, forKey: .eventId)
+        try container.encode(session, forKey: .session)
+        try container.encode(type, forKey: .type)
+    }
 }

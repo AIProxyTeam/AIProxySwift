@@ -215,6 +215,181 @@ struct OpenAIRealtimeMessageTests {
     }
 
     @Test
+    func testResponseDoneDecodesPhasedOutput() throws {
+        let event = try decode(
+            #"""
+            {
+              "type": "response.done",
+              "event_id": "event_40",
+              "response": {
+                "id": "resp_40",
+                "conversation_id": "conv_40",
+                "status": "completed",
+                "output": [
+                  {
+                    "id": "msg_commentary",
+                    "phase": "commentary",
+                    "content": [
+                      {
+                        "type": "output_audio",
+                        "transcript": "I'll check that now."
+                      }
+                    ]
+                  },
+                  {
+                    "id": "msg_final",
+                    "phase": "final_answer",
+                    "content": [
+                      {
+                        "type": "output_audio",
+                        "transcript": "The appointment is confirmed."
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+            """#
+        )
+
+        guard case .responseDone(let payload) = event else {
+            Issue.record("Expected responseDone")
+            return
+        }
+        #expect(payload.output?.count == 2)
+        #expect(payload.output?.first?.phase == .commentary)
+        #expect(payload.output?.first?.transcript == "I'll check that now.")
+        #expect(payload.output?.last?.phase == .finalAnswer)
+        #expect(payload.output?.last?.transcript == "The appointment is confirmed.")
+    }
+
+    @Test
+    func testResponseOutputItemDoneDecodesPhase() throws {
+        let event = try decode(
+            #"""
+            {
+              "type": "response.output_item.done",
+              "event_id": "event_41",
+              "response_id": "resp_41",
+              "output_index": 0,
+              "item": {
+                "id": "msg_41",
+                "phase": "final_answer",
+                "content": [
+                  {
+                    "type": "output_audio",
+                    "transcript": "Done."
+                  }
+                ]
+              }
+            }
+            """#
+        )
+
+        guard case .responseOutputItemDone(let payload) = event else {
+            Issue.record("Expected responseOutputItemDone")
+            return
+        }
+        #expect(payload.itemID == "msg_41")
+        #expect(payload.phase == .finalAnswer)
+        #expect(payload.transcript == "Done.")
+    }
+
+    @Test
+    func testResponseOutputItemAddedDecodesPhase() throws {
+        let event = try decode(
+            #"""
+            {
+              "type": "response.output_item.added",
+              "event_id": "event_42",
+              "response_id": "resp_42",
+              "output_index": 0,
+              "item": {
+                "id": "msg_42",
+                "phase": "commentary"
+              }
+            }
+            """#
+        )
+
+        guard case .responseOutputItemAdded(let payload) = event else {
+            Issue.record("Expected responseOutputItemAdded")
+            return
+        }
+        #expect(payload.itemID == "msg_42")
+        #expect(payload.phase == .commentary)
+    }
+
+    @Test
+    func testConversationItemAddedDecodesPhase() throws {
+        let event = try decode(
+            #"""
+            {
+              "type": "conversation.item.added",
+              "event_id": "event_43",
+              "item": {
+                "id": "msg_43",
+                "role": "assistant",
+                "phase": "final_answer"
+              }
+            }
+            """#
+        )
+
+        guard case .conversationItemAdded(let payload) = event else {
+            Issue.record("Expected conversationItemAdded")
+            return
+        }
+        #expect(payload.itemID == "msg_43")
+        #expect(payload.role == "assistant")
+        #expect(payload.phase == .finalAnswer)
+    }
+
+    @Test
+    func testConversationItemCreatedAndDoneDecodePhase() throws {
+        let created = try decode(
+            #"""
+            {
+              "type": "conversation.item.created",
+              "event_id": "event_44",
+              "item": {
+                "id": "msg_44",
+                "role": "assistant",
+                "phase": "commentary"
+              }
+            }
+            """#
+        )
+        let done = try decode(
+            #"""
+            {
+              "type": "conversation.item.done",
+              "event_id": "event_45",
+              "item": {
+                "id": "msg_45",
+                "role": "assistant",
+                "phase": "final_answer"
+              }
+            }
+            """#
+        )
+
+        guard case .conversationItemCreated(let createdPayload) = created else {
+            Issue.record("Expected conversationItemCreated")
+            return
+        }
+        #expect(createdPayload.itemID == "msg_44")
+        #expect(createdPayload.phase == .commentary)
+
+        guard case .conversationItemDone(let donePayload) = done else {
+            Issue.record("Expected conversationItemDone")
+            return
+        }
+        #expect(donePayload.itemID == "msg_45")
+        #expect(donePayload.phase == .finalAnswer)
+    }
+
+    @Test
     func testInputAudioTranscriptionDeltaLogprobsAreDecodable() throws {
         let event = try decode(
             #"{"type":"conversation.item.input_audio_transcription.delta","event_id":"event_31","item_id":"item_31","content_index":0,"delta":"Hel","logprobs":[{"token":"Hel","bytes":[72,101,108],"logprob":-0.21}]}"#
