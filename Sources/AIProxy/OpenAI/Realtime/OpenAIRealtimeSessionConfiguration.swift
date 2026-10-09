@@ -30,6 +30,10 @@ nonisolated public struct OpenAIRealtimeSessionConfiguration: Encodable, Sendabl
     public let prompt: Prompt?
     public let tracing: Tracing?
     public let truncation: Truncation?
+    /// Optional reasoning settings for models that support Realtime Reasoning.
+    public let reasoning: OpenAIRealtimeReasoning?
+    /// Whether the model may call multiple tools in parallel. Omitted when nil.
+    public let parallelToolCalls: Bool?
 
     public init(
         include: [IncludeField]? = nil,
@@ -52,7 +56,9 @@ nonisolated public struct OpenAIRealtimeSessionConfiguration: Encodable, Sendabl
         voice: Voice? = nil,
         prompt: Prompt? = nil,
         tracing: Tracing? = nil,
-        truncation: Truncation? = nil
+        truncation: Truncation? = nil,
+        reasoning: OpenAIRealtimeReasoning? = nil,
+        parallelToolCalls: Bool? = nil
     ) {
         var resolvedModalities = modalities
         if let modalities, Set(modalities) == Set([.audio, .text]) {
@@ -85,6 +91,8 @@ nonisolated public struct OpenAIRealtimeSessionConfiguration: Encodable, Sendabl
         self.prompt = prompt
         self.tracing = tracing
         self.truncation = truncation
+        self.reasoning = reasoning
+        self.parallelToolCalls = parallelToolCalls
     }
 
     public static func voiceWithWebSearch(
@@ -639,14 +647,10 @@ private struct OpenAIRealtimeSessionConfigurationWire: Encodable, Sendable {
     let prompt: OpenAIRealtimeSessionConfiguration.Prompt?
     let tracing: OpenAIRealtimeSessionConfiguration.Tracing?
     let truncation: OpenAIRealtimeSessionConfiguration.Truncation?
-    let reasoning: OpenAIRealtimeReasoningConfiguration?
+    let reasoning: OpenAIRealtimeReasoning?
     let parallelToolCalls: Bool?
 
-    init(
-        _ configuration: OpenAIRealtimeSessionConfiguration,
-        reasoning: OpenAIRealtimeReasoningConfiguration? = nil,
-        parallelToolCalls: Bool? = nil
-    ) {
+    init(_ configuration: OpenAIRealtimeSessionConfiguration) {
         self.include = configuration.include
         self.type = configuration.type
         self.inputAudioFormat = configuration.inputAudioFormat
@@ -665,8 +669,8 @@ private struct OpenAIRealtimeSessionConfigurationWire: Encodable, Sendable {
         self.prompt = configuration.prompt
         self.tracing = configuration.tracing
         self.truncation = configuration.truncation
-        self.reasoning = reasoning
-        self.parallelToolCalls = parallelToolCalls
+        self.reasoning = configuration.reasoning
+        self.parallelToolCalls = configuration.parallelToolCalls
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -785,15 +789,5 @@ private struct OpenAIRealtimeSessionConfigurationWire: Encodable, Sendable {
 extension OpenAIRealtimeSessionConfiguration {
     public func encode(to encoder: Encoder) throws {
         try OpenAIRealtimeSessionConfigurationWire(self).encode(to: encoder)
-    }
-}
-
-extension OpenAIRealtimeReasoningSessionConfiguration {
-    public func encode(to encoder: Encoder) throws {
-        try OpenAIRealtimeSessionConfigurationWire(
-            session,
-            reasoning: reasoning,
-            parallelToolCalls: parallelToolCalls
-        ).encode(to: encoder)
     }
 }

@@ -34,21 +34,6 @@ nonisolated private let kWebsocketDisconnectedEarlyThreshold: TimeInterval = 3
         self.receiveMessage()
     }
 
-    init(
-        webSocketTask: URLSessionWebSocketTask,
-        sessionConfiguration: OpenAIRealtimeReasoningSessionConfiguration
-    ) {
-        self.webSocketTask = webSocketTask
-        self.sessionConfiguration = sessionConfiguration.session
-        self.initialSessionUpdate = OpenAIRealtimeSessionUpdate(session: sessionConfiguration)
-
-        Task {
-            await self.sendMessage(self.initialSessionUpdate)
-        }
-        self.webSocketTask.resume()
-        self.receiveMessage()
-    }
-
     deinit {
         logIf(.debug)?.debug("OpenAIRealtimeSession is being freed")
     }

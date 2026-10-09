@@ -73,13 +73,11 @@ struct OpenAIRealtimeSessionEncodingTests {
     @Test
     func reasoningSessionUpdateMergesBaseAndReasoningFields() throws {
         let update = OpenAIRealtimeSessionUpdate(
-            session: OpenAIRealtimeReasoningSessionConfiguration(
-                session: OpenAIRealtimeSessionConfiguration(
-                    inputAudioFormat: .pcm16,
-                    instructions: "Solve carefully.",
-                    outputModalities: [.audio],
-                    voice: .builtin("alloy")
-                ),
+            session: OpenAIRealtimeSessionConfiguration(
+                inputAudioFormat: .pcm16,
+                instructions: "Solve carefully.",
+                outputModalities: [.audio],
+                voice: .builtin("alloy"),
                 reasoning: .init(effort: .low),
                 parallelToolCalls: true
             )
@@ -210,14 +208,12 @@ struct OpenAIRealtimeSessionEncodingTests {
 
     @Test
     func reasoningResponseCreateEncodesReasoning() throws {
-        let event = OpenAIRealtimeReasoningResponseCreate(
+        let event = OpenAIRealtimeResponseCreate(
             eventID: "evt_reasoning",
             response: .init(
-                base: .init(
-                    instructions: "Use the lowest sufficient reasoning effort.",
-                    outputModalities: [.audio],
-                    toolChoice: .auto
-                ),
+                instructions: "Use the lowest sufficient reasoning effort.",
+                outputModalities: [.audio],
+                toolChoice: .auto,
                 reasoning: .init(effort: .minimal),
                 parallelToolCalls: false
             )
@@ -233,6 +229,58 @@ struct OpenAIRealtimeSessionEncodingTests {
         #expect(response["parallel_tool_calls"] as? Bool == false)
         let reasoning = response["reasoning"] as! [String: Any]
         #expect(reasoning["effort"] as? String == "minimal")
+    }
+
+    @Test(
+        arguments: [nil, "minimal", "low", "medium", "high", "xhigh"] as [String?],
+        [nil, false, true] as [Bool?]
+    )
+    func reasoningFieldsPreserveOptionalValuesAtBothScopes(
+        effort: String?,
+        parallelToolCalls: Bool?
+    ) throws {
+        let reasoning: OpenAIRealtimeReasoning?
+        if let effort {
+            let parsedEffort: OpenAIRealtimeReasoning.Effort = try #require(
+                OpenAIRealtimeReasoning.Effort(rawValue: effort)
+            )
+            reasoning = OpenAIRealtimeReasoning(effort: parsedEffort)
+        } else {
+            reasoning = nil
+        }
+
+        let update = OpenAIRealtimeSessionUpdate(
+            session: .init(reasoning: reasoning, parallelToolCalls: parallelToolCalls)
+        )
+        let create = OpenAIRealtimeResponseCreate(
+            response: .init(reasoning: reasoning, parallelToolCalls: parallelToolCalls)
+        )
+        let updateRoot = try #require(Self.jsonObject(encoder.encode(update)) as? [String: Any])
+        let createRoot = try #require(Self.jsonObject(encoder.encode(create)) as? [String: Any])
+        #expect(updateRoot["type"] as? String == "session.update")
+        #expect(createRoot["type"] as? String == "response.create")
+
+        let session = try #require(updateRoot["session"] as? [String: Any])
+        let response = try #require(createRoot["response"] as? [String: Any])
+        for payload in [session, response] {
+            if let effort {
+                let value = try #require(payload["reasoning"] as? [String: Any])
+                #expect(value["effort"] as? String == effort)
+                #expect(value.count == 1)
+            } else {
+                #expect(payload["reasoning"] == nil)
+            }
+            if let parallelToolCalls {
+                #expect(payload["parallel_tool_calls"] as? Bool == parallelToolCalls)
+            } else {
+                #expect(payload["parallel_tool_calls"] == nil)
+            }
+            #expect(payload["parallelToolCalls"] == nil)
+        }
+        #expect(updateRoot["reasoning"] == nil)
+        #expect(updateRoot["parallel_tool_calls"] == nil)
+        #expect(createRoot["reasoning"] == nil)
+        #expect(createRoot["parallel_tool_calls"] == nil)
     }
 
     @Test

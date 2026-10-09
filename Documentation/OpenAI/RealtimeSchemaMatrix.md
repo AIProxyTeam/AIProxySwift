@@ -7,8 +7,8 @@ Reference: https://developers.openai.com/api/reference/resources/realtime
 
 ## Shared Realtime Session
 
-These fields are used by Performance Realtime models, such as `gpt-realtime-1.5`, and are also the
-base session shape composed by Realtime Reasoning models.
+These fields are used by Performance Realtime models, such as `gpt-realtime-1.5`, and are also used
+by Realtime Reasoning models.
 
 | Wire field | AIProxySwift API | Wire shape emitted |
 | --- | --- | --- |
@@ -31,16 +31,16 @@ base session shape composed by Realtime Reasoning models.
 | `audio.output.speed` | `OpenAIRealtimeSessionConfiguration.speed` | number (range 0.25...1.5) |
 | `audio.output.voice` | `OpenAIRealtimeSessionConfiguration.voice` | string or object (`id`) |
 
-## Realtime Reasoning Session
+## Realtime Reasoning Session Fields
 
-Realtime Reasoning models, such as `gpt-realtime-2`, compose the shared session fields above and add
-Reasoning-only fields to the same `session.update.session` object.
+Realtime Reasoning models, such as `gpt-realtime-2`, add Reasoning-only fields to the same
+`session.update.session` object.
 
 | Wire field | AIProxySwift API | Wire shape emitted |
 | --- | --- | --- |
-| `reasoning` | `OpenAIRealtimeReasoningSessionConfiguration.reasoning` | object |
-| `reasoning.effort` | `OpenAIRealtimeReasoningConfiguration.effort` | `minimal`, `low`, `medium`, `high`, or `xhigh` |
-| `parallel_tool_calls` | `OpenAIRealtimeReasoningSessionConfiguration.parallelToolCalls` | boolean |
+| `reasoning` | `OpenAIRealtimeSessionConfiguration.reasoning` | object |
+| `reasoning.effort` | `OpenAIRealtimeReasoning.effort` | `minimal`, `low`, `medium`, `high`, or `xhigh` |
+| `parallel_tool_calls` | `OpenAIRealtimeSessionConfiguration.parallelToolCalls` | boolean |
 
 ## Shared `response.create`
 
@@ -53,15 +53,13 @@ Reasoning-only fields to the same `session.update.session` object.
 | `response.tools` | `OpenAIRealtimeResponseCreate.Response.tools` | optional tool union array (`function`, `mcp`, `web_search`) |
 | `response.tool_choice` | `OpenAIRealtimeResponseCreate.Response.toolChoice` | optional string/object union |
 
-## Realtime Reasoning `response.create`
+## Realtime Reasoning `response.create` Fields
 
 | Wire field | AIProxySwift API | Wire shape emitted |
 | --- | --- | --- |
-| `type` | `OpenAIRealtimeReasoningResponseCreate.type` | `"response.create"` |
-| `event_id` | `OpenAIRealtimeReasoningResponseCreate.eventID` | optional string |
-| `response.reasoning` | `OpenAIRealtimeReasoningResponseCreate.Response.reasoning` | object |
-| `response.reasoning.effort` | `OpenAIRealtimeReasoningConfiguration.effort` | `minimal`, `low`, `medium`, `high`, or `xhigh` |
-| `response.parallel_tool_calls` | `OpenAIRealtimeReasoningResponseCreate.Response.parallelToolCalls` | boolean |
+| `response.reasoning` | `OpenAIRealtimeResponseCreate.Response.reasoning` | object |
+| `response.reasoning.effort` | `OpenAIRealtimeReasoning.effort` | `minimal`, `low`, `medium`, `high`, or `xhigh` |
+| `response.parallel_tool_calls` | `OpenAIRealtimeResponseCreate.Response.parallelToolCalls` | boolean |
 
 ## Realtime Reasoning Output Phases
 

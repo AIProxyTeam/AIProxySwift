@@ -8,7 +8,6 @@ nonisolated public struct OpenAIRealtimeSessionUpdate: Encodable {
 
     /// Session configuration to update
     public let session: OpenAIRealtimeSessionConfiguration
-    private let reasoningSession: OpenAIRealtimeReasoningSessionConfiguration?
 
     /// The event type, must be "session.update".
     public let type = "session.update"
@@ -25,26 +24,12 @@ nonisolated public struct OpenAIRealtimeSessionUpdate: Encodable {
     ) {
         self.eventId = eventId
         self.session = session
-        self.reasoningSession = nil
-    }
-
-    public init(
-        eventId: String? = nil,
-        session: OpenAIRealtimeReasoningSessionConfiguration
-    ) {
-        self.eventId = eventId
-        self.session = session.session
-        self.reasoningSession = session
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encodeIfPresent(eventId, forKey: .eventId)
-        if let reasoningSession {
-            try container.encode(reasoningSession, forKey: .session)
-        } else {
-            try container.encode(session, forKey: .session)
-        }
+        try container.encode(session, forKey: .session)
         try container.encode(type, forKey: .type)
     }
 }

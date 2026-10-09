@@ -1389,7 +1389,7 @@ final class RealtimeManager {
             outputModalities: [.audio],
             outputAudioFormat: .pcm16,
             turnDetection: .semanticVAD(.init(eagerness: .medium)),
-            voice: "shimmer"
+            voice: .builtin("shimmer")
         )
 
         let realtimeSession = try await openAIService.realtimeSession(
@@ -1460,9 +1460,9 @@ final class RealtimeManager {
 ```swift
 let configuration = OpenAIRealtimeSessionConfiguration(
     outputModalities: [.audio],
-    voice: .builtin("alloy"),
     tools: [.webSearch(.init(searchContextSize: .medium))],
-    toolChoice: .auto
+    toolChoice: .auto,
+    voice: .builtin("alloy")
 )
 
 let session = try await openAIService.realtimeSession(
@@ -1479,13 +1479,11 @@ transport and shared session fields as Performance models like `gpt-realtime-1.5
 Reasoning-only configuration for effort and parallel tool calls.
 
 ```swift
-let configuration = OpenAIRealtimeReasoningSessionConfiguration(
-    session: OpenAIRealtimeSessionConfiguration(
-        outputModalities: [.audio],
-        voice: .builtin("alloy"),
-        tools: [.webSearch(.init(searchContextSize: .medium))],
-        toolChoice: .auto
-    ),
+let configuration = OpenAIRealtimeSessionConfiguration(
+    outputModalities: [.audio],
+    tools: [.webSearch(.init(searchContextSize: .medium))],
+    toolChoice: .auto,
+    voice: .builtin("alloy"),
     reasoning: .init(effort: .low),
     parallelToolCalls: true
 )
@@ -1501,12 +1499,10 @@ You can also override Reasoning settings for a single response:
 
 ```swift
 await session.sendMessage(
-    OpenAIRealtimeReasoningResponseCreate(
+    OpenAIRealtimeResponseCreate(
         response: .init(
-            base: .init(
-                instructions: "Use the lowest sufficient reasoning effort.",
-                outputModalities: [.audio]
-            ),
+            instructions: "Use the lowest sufficient reasoning effort.",
+            outputModalities: [.audio],
             reasoning: .init(effort: .minimal),
             parallelToolCalls: false
         )

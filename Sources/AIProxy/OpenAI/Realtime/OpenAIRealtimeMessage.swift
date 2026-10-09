@@ -277,35 +277,6 @@ public struct OpenAIRealtimeInputAudioBufferDTMFEventReceivedEvent: Decodable, S
     }
 }
 
-public enum OpenAIRealtimeResponsePhase: String, Decodable, Sendable {
-    case commentary
-    case finalAnswer = "final_answer"
-}
-
-public struct OpenAIRealtimeResponseOutputItem: Decodable, Sendable {
-    public let id: String?
-    public let phase: OpenAIRealtimeResponsePhase?
-    public let content: [Content]?
-
-    public var transcript: String? {
-        content?.first(where: { ($0.transcript?.isEmpty == false) })?.transcript
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case phase
-        case content
-    }
-}
-
-extension OpenAIRealtimeResponseOutputItem {
-    public struct Content: Decodable, Sendable {
-        public let type: String?
-        public let text: String?
-        public let transcript: String?
-    }
-}
-
 public struct OpenAIRealtimeConversationItemCreatedEvent: Decodable, Sendable {
     public let itemID: String?
     public let previousItemID: String?
