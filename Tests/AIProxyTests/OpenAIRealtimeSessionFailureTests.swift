@@ -196,7 +196,7 @@ struct OpenAIRealtimeSessionFailureTests {
     }
 
     @Test
-    func receiverTaskCancellationClosesOnceAndPreservesCancellation() async throws {
+    func cancellationWhileAwaitingNextClosesOnceAndPreservesCancellation() async throws {
         let fixture = RealtimeScriptedTransport()
         let session = fixture.makeSession()
         defer { session.disconnect() }
@@ -212,6 +212,84 @@ struct OpenAIRealtimeSessionFailureTests {
         #expect(fixture.cancelCount == 1)
         #expect(fixture.pendingReceivers.isEmpty)
         #expect(reader.isCancelled)
+    }
+
+    @Test
+    func taskLifetimeCleanupClosesWhenCancelledDuringEventHandling() async throws {
+        let fixture = RealtimeScriptedTransport()
+        let session = fixture.makeSession()
+        defer { session.disconnect() }
+        try await fixture.waitForSend(1)
+        let handling = RealtimeTestSignal<Void>()
+        let finished = RealtimeTestSignal<Bool>()
+        let reader = Task { @AIProxyActor in
+            defer {
+                session.disconnect()
+                finished.succeed(Task.isCancelled)
+            }
+            for try await _ in session.receiver {
+                handling.succeed(())
+                // Model cancellable handler work; cancellation ends it, not elapsed time.
+                try await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
+        defer { reader.cancel() }
+        fixture.deliver(.success(.string(RealtimeTestFixtures.text)))
+        try await handling.value()
+        try await fixture.waitForReceive(2)
+        reader.cancel()
+        let callerWasCancelled = try await finished.value()
+        do {
+            try await reader.value
+            Issue.record("Handler work must observe cancellation")
+        } catch is CancellationError {}
+        #expect(callerWasCancelled)
+        #expect(reader.isCancelled)
+        #expect(fixture.cancelCount == 1)
+        #expect(fixture.pendingReceivers.isEmpty)
+        #expect(fixture.resumeCount == 1)
+        do {
+            try await session.sendMessage(OpenAIRealtimeResponseCreate())
+            Issue.record("Task-lifetime cleanup must reject subsequent sends")
+        } catch OpenAIRealtimeSessionError.disconnected {
+            #expect(fixture.sent.count == 1)
+        }
+        session.disconnect()
+        #expect(fixture.cancelCount == 1)
+    }
+
+    @Test
+    func taskLifetimeCleanupClosesWhenEventHandlingReturnsEarly() async throws {
+        let fixture = RealtimeScriptedTransport()
+        let session = fixture.makeSession()
+        defer { session.disconnect() }
+        try await fixture.waitForSend(1)
+        let finished = RealtimeTestSignal<Void>()
+        let reader = Task { @AIProxyActor in
+            defer {
+                session.disconnect()
+                finished.succeed(())
+            }
+            for try await _ in session.receiver {
+                return
+            }
+            Issue.record("The reader must return while handling its first event")
+        }
+        defer { reader.cancel() }
+        fixture.deliver(.success(.string(RealtimeTestFixtures.text)))
+        try await finished.value()
+        try await reader.value
+        #expect(!reader.isCancelled)
+        #expect(fixture.cancelCount == 1)
+        #expect(fixture.pendingReceivers.isEmpty)
+        do {
+            try await session.sendMessage(OpenAIRealtimeResponseCreate())
+            Issue.record("Early-return cleanup must reject subsequent sends")
+        } catch OpenAIRealtimeSessionError.disconnected {
+            #expect(fixture.sent.count == 1)
+        }
+        session.disconnect()
+        #expect(fixture.cancelCount == 1)
     }
 
     @Test

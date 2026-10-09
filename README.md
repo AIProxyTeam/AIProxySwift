@@ -1302,7 +1302,9 @@ client event ID in `error.eventID`; the outer `eventID` identifies the server ev
 Read these fields instead of the previous `errorBody` property. A provider error
 does not stop reception on an open connection. Check `responseDone.status` and
 `statusDetails` to distinguish completed, cancelled, incomplete, and failed responses.
-Cancelling the sole receiving task closes the session, as does `disconnect()`.
+Cancelling while awaiting the next event closes the session. Put
+`defer { session.disconnect() }` in the receiving task to also close it when
+cancellation interrupts event handling or the task returns early.
 The SDK leaves retries and reconnection to the caller.
 
 An abnormal close throws `OpenAIRealtimeSessionError.closed`, retaining the close
@@ -1436,6 +1438,10 @@ final class RealtimeManager {
 
         // Listen for messages from OpenAI:
         Task {
+            defer {
+                realtimeSession.disconnect()
+                audioController.stop()
+            }
             do {
                 for try await message in realtimeSession.receiver {
                     switch message {
@@ -1465,8 +1471,6 @@ final class RealtimeManager {
             } catch {
                 print("Realtime session failed: \(error)")
             }
-            realtimeSession.disconnect()
-            audioController.stop()
         }
 
         self.realtimeSession = realtimeSession
