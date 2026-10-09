@@ -39,7 +39,7 @@ Realtime Reasoning models, such as `gpt-realtime-2`, add Reasoning-only fields t
 | Wire field | AIProxySwift API | Wire shape emitted |
 | --- | --- | --- |
 | `reasoning` | `OpenAIRealtimeSessionConfiguration.reasoning` | object |
-| `reasoning.effort` | `OpenAIRealtimeReasoning.effort` | `minimal`, `low`, `medium`, `high`, or `xhigh` |
+| `reasoning.effort` | `OpenAIRealtimeReasoning` | `minimal`, `low`, `medium`, `high`, or `xhigh` |
 | `parallel_tool_calls` | `OpenAIRealtimeSessionConfiguration.parallelToolCalls` | boolean |
 
 ## Shared `response.create`
@@ -58,7 +58,7 @@ Realtime Reasoning models, such as `gpt-realtime-2`, add Reasoning-only fields t
 | Wire field | AIProxySwift API | Wire shape emitted |
 | --- | --- | --- |
 | `response.reasoning` | `OpenAIRealtimeResponseCreate.Response.reasoning` | object |
-| `response.reasoning.effort` | `OpenAIRealtimeReasoning.effort` | `minimal`, `low`, `medium`, `high`, or `xhigh` |
+| `response.reasoning.effort` | `OpenAIRealtimeReasoning` | `minimal`, `low`, `medium`, `high`, or `xhigh` |
 | `response.parallel_tool_calls` | `OpenAIRealtimeResponseCreate.Response.parallelToolCalls` | boolean |
 
 ## Realtime Reasoning Output Phases

@@ -1477,6 +1477,7 @@ let session = try await openAIService.realtimeSession(
 OpenAI's Realtime Reasoning models, such as `gpt-realtime-2`, use the same Realtime WebSocket
 transport and shared session fields as Performance models like `gpt-realtime-1.5`, plus
 Reasoning-only configuration for effort and parallel tool calls.
+Omit `reasoning` to leave the effort unspecified.
 
 ```swift
 let configuration = OpenAIRealtimeSessionConfiguration(
@@ -1484,7 +1485,7 @@ let configuration = OpenAIRealtimeSessionConfiguration(
     tools: [.webSearch(.init(searchContextSize: .medium))],
     toolChoice: .auto,
     voice: .builtin("alloy"),
-    reasoning: .init(effort: .low),
+    reasoning: .low,
     parallelToolCalls: true
 )
 
@@ -1503,7 +1504,7 @@ await session.sendMessage(
         response: .init(
             instructions: "Use the lowest sufficient reasoning effort.",
             outputModalities: [.audio],
-            reasoning: .init(effort: .minimal),
+            reasoning: .minimal,
             parallelToolCalls: false
         )
     )

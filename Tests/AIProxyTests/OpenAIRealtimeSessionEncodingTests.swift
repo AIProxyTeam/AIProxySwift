@@ -78,7 +78,7 @@ struct OpenAIRealtimeSessionEncodingTests {
                 instructions: "Solve carefully.",
                 outputModalities: [.audio],
                 voice: .builtin("alloy"),
-                reasoning: .init(effort: .low),
+                reasoning: .low,
                 parallelToolCalls: true
             )
         )
@@ -214,7 +214,7 @@ struct OpenAIRealtimeSessionEncodingTests {
                 instructions: "Use the lowest sufficient reasoning effort.",
                 outputModalities: [.audio],
                 toolChoice: .auto,
-                reasoning: .init(effort: .minimal),
+                reasoning: .minimal,
                 parallelToolCalls: false
             )
         )
@@ -241,10 +241,10 @@ struct OpenAIRealtimeSessionEncodingTests {
     ) throws {
         let reasoning: OpenAIRealtimeReasoning?
         if let effort {
-            let parsedEffort: OpenAIRealtimeReasoning.Effort = try #require(
-                OpenAIRealtimeReasoning.Effort(rawValue: effort)
+            let value: OpenAIRealtimeReasoning = try #require(
+                OpenAIRealtimeReasoning(rawValue: effort)
             )
-            reasoning = OpenAIRealtimeReasoning(effort: parsedEffort)
+            reasoning = value
         } else {
             reasoning = nil
         }
