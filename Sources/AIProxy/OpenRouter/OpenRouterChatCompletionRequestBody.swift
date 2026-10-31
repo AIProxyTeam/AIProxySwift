@@ -150,6 +150,9 @@ nonisolated public struct OpenRouterChatCompletionRequestBody: Encodable, Sendab
     /// If not set, OpenAI defaults this value to 1
     public let topP: Double?
 
+    /// Constrains the verbosity of the model's response. Lower values are more concise.
+    public let verbosity: Verbosity?
+
     /// OpenRouter-specific parameter
     /// See "Prompt Transforms" section: openrouter.ai/docs/transforms
     public let transforms: [String]?
@@ -192,6 +195,7 @@ nonisolated public struct OpenRouterChatCompletionRequestBody: Encodable, Sendab
         case topLogprobs = "top_logprobs"
         case topP = "top_p"
         case transforms
+        case verbosity
         case user
     }
 
@@ -229,7 +233,8 @@ nonisolated public struct OpenRouterChatCompletionRequestBody: Encodable, Sendab
         topLogprobs: Int? = nil,
         topP: Double? = nil,
         transforms: [String]? = nil,
-        user: String? = nil
+        user: String? = nil,
+        verbosity: Verbosity? = nil
     ) {
         self.messages = messages
         self.frequencyPenalty = frequencyPenalty
@@ -262,6 +267,17 @@ nonisolated public struct OpenRouterChatCompletionRequestBody: Encodable, Sendab
         self.topP = topP
         self.transforms = transforms
         self.user = user
+        self.verbosity = verbosity
+    }
+}
+
+// MARK: - RequestBody.Verbosity
+extension OpenRouterChatCompletionRequestBody {
+    /// Controls how concise or detailed the generated response should be.
+    nonisolated public enum Verbosity: String, Encodable, Sendable {
+        case low
+        case medium
+        case high
     }
 }
 

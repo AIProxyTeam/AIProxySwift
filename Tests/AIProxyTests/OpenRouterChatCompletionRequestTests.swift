@@ -8,6 +8,17 @@ import XCTest
 
 final class OpenRouterChatCompletionRequestTests: XCTestCase {
 
+    func testVerbosityIsEncoded() throws {
+        let request = OpenRouterChatCompletionRequestBody(
+            messages: [.user(content: .text("Hello"))],
+            verbosity: .high
+        )
+
+        let data = Data(try request.serialize().utf8)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["verbosity"] as? String, "high")
+    }
+
     func testToolCallConversationIsEncodable() throws {
         let request = OpenRouterChatCompletionRequestBody(
             messages: [
