@@ -7,6 +7,13 @@
 
 import Foundation
 
+/// OpenAI REST operations and Realtime sessions.
+///
+/// Every REST operation throws `AIProxyHTTPError` for HTTP status codes of 300 or
+/// greater, exposing the response body and headers. This includes
+/// requests that start a stream and deprecated forwarding methods. Callers previously
+/// catching `AIProxyError.unsuccessfulRequest` for OpenAI REST failures must catch
+/// `AIProxyHTTPError` instead. Transport and decoding errors retain their types.
 @AIProxyActor public class OpenAIService: Sendable {
     private let requestFormat: OpenAIRequestFormat
     private let requestBuilder: AIProxyRequestBuilder
@@ -47,7 +54,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Initiates a streaming chat completion request to /v1/chat/completions.
@@ -73,7 +80,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeStreamingChunks(request)
+        return try await self.makeRequestAndDeserializeStreamingChunks(request)
     }
 
     /// Initiates a create image request to /v1/images/generations
@@ -96,7 +103,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Initiates a create image edit request to `v1/images/edits`
@@ -119,7 +126,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Initiates a create transcription request to v1/audio/transcriptions
@@ -146,11 +153,11 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        let (data, _) = try await BackgroundNetworker.makeRequestAndWaitForData(
-            self.serviceNetworker.urlSession,
+        let response = try await self.makeRequestAndWaitForData(
             request,
-            progressCallback
+            progressCallback: progressCallback
         )
+        let data = response.body
         if body.responseFormat == "text" {
             guard let text = String(data: data, encoding: .utf8) else {
                 throw AIProxyError.assertion("Could not represent OpenAI's whisper response as string")
@@ -181,7 +188,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeStreamingChunks(request)
+        return try await self.makeRequestAndDeserializeStreamingChunks(request)
     }
 
     /// Initiates a create text to speech request to v1/audio/speech
@@ -204,11 +211,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        let (data, _) = try await BackgroundNetworker.makeRequestAndWaitForData(
-            self.serviceNetworker.urlSession,
-            request
-        )
-        return data
+        return try await self.makeRequestAndWaitForData(request).body
     }
 
     /// Initiates a moderation request to /v1/moderations
@@ -231,7 +234,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Get a vector representation of a given input that can be easily consumed by machine learning models and algorithms. Related guide:
@@ -254,7 +257,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Starts a realtime session.
@@ -320,7 +323,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Creates a 'response' using OpenAI's new API product:
@@ -332,6 +335,8 @@ import Foundation
     ///   - additionalHeaders: Optional headers to pass up with the request alongside the lib's default headers
     /// - Returns: An OpenAI response. See this reference:
     ///            https://platform.openai.com/docs/api-reference/responses/object#responses/object-output
+    /// - Throws: `AIProxyHTTPError` with the status code, original body bytes and headers for HTTP status codes of 300 or greater.
+    ///   This applies regardless of `background`, as for every OpenAI REST operation. Transport and decoding errors retain their types.
     public func createResponse(
         requestBody: OpenAICreateResponseRequestBody,
         secondsToWait: UInt,
@@ -343,7 +348,47 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        let response: AIProxyResponseWithHeaders<OpenAIResponse> = try await self.makeRequestAndDeserializeResponse(request)
+        return response.body
+    }
+
+    /// Retrieves one current response snapshot with its HTTP response headers.
+    /// The caller owns polling and retries. Failed or incomplete generation remains response data.
+    ///
+    /// - Parameters:
+    ///   - responseID: The known provider response ID, encoded as one path segment.
+    ///   - include: Additional output data to include, in the supplied order.
+    ///   - secondsToWait: The amount of time to wait before `URLError.timedOut` is raised.
+    ///   - additionalHeaders: Optional headers alongside the library's default headers.
+    /// - Throws: `AIProxyHTTPError` with the status code, original body bytes and headers for HTTP status codes of 300 or greater.
+    ///   Transport and decoding errors retain their types.
+    public func getResponse(
+        responseID: String,
+        include: [OpenAIInclude]? = nil,
+        secondsToWait: UInt,
+        additionalHeaders: [String: String] = [:]
+    ) async throws -> AIProxyResponseWithHeaders<OpenAIResponse> {
+        guard !responseID.isEmpty, responseID != ".", responseID != ".." else {
+            throw AIProxyError.assertion("Response IDs must not be empty or dot path segments")
+        }
+        guard let encodedID = AIProxyUtils.percentEncodePathSegment(responseID),
+              var components = URLComponents(string: self.resolvedPath("responses/\(encodedID)")) else {
+            throw AIProxyError.assertion("Response IDs must be URL encodable")
+        }
+        if let include, !include.isEmpty {
+            components.queryItems = (components.queryItems ?? []) + include.map {
+                URLQueryItem(name: "include[]", value: $0.rawValue)
+            }
+        }
+        guard let path = components.string else {
+            throw AIProxyError.assertion("Could not create a response retrieval path")
+        }
+        let request = try await self.requestBuilder.plainGET(
+            path: path,
+            secondsToWait: secondsToWait,
+            additionalHeaders: additionalHeaders
+        )
+        return try await self.makeRequestAndDeserializeResponse(request)
     }
 
     /// Creates a streaming 'response' using OpenAI's new API product:
@@ -356,6 +401,9 @@ import Foundation
     ///   - additionalHeaders: Optional headers to pass up with the request alongside the lib's default headers
     /// - Returns: An async sequence of response chunks. See this reference:
     ///            https://platform.openai.com/docs/api-reference/responses/streaming
+    /// - Throws: `AIProxyHTTPError` with the status code, response body text and headers if the initial streaming request returns an HTTP status code of 300 or greater.
+    ///   Error-body line endings are removed, matching the existing streaming behavior.
+    ///   This applies regardless of `background`, as for every OpenAI REST operation. Transport errors retain their types.
     public func createStreamingResponse(
         requestBody: OpenAICreateResponseRequestBody,
         secondsToWait: UInt,
@@ -369,9 +417,10 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeStreamingChunks(request)
+        return try await self.makeRequestAndDeserializeStreamingChunks(request)
     }
 
+    /// Forwards to `createStreamingResponse`, including its `AIProxyHTTPError` catch contract.
     @available(*, deprecated, message: "This has been renamed to createStreamingResponse")
     public func createStreamingResponseEvents(
         requestBody: OpenAICreateResponseRequestBody,
@@ -400,7 +449,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Creates a vector store file
@@ -427,7 +476,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     // MARK: - Conversations API
@@ -455,7 +504,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Retrieves a conversation by ID.
@@ -479,7 +528,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Updates a conversation's metadata.
@@ -503,7 +552,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Deletes a conversation.
@@ -524,7 +573,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Lists items in a conversation.
@@ -562,7 +611,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Creates items in a conversation.
@@ -589,7 +638,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Retrieves a specific item from a conversation.
@@ -615,7 +664,7 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     /// Deletes an item from a conversation.
@@ -638,10 +687,81 @@ import Foundation
             secondsToWait: secondsToWait,
             additionalHeaders: additionalHeaders
         )
-        return try await self.serviceNetworker.makeRequestAndDeserializeResponse(request)
+        return try await self.makeRequestAndDeserializeResponse(request).body
     }
 
     // MARK: - Private
+    private func makeRequestAndWaitForData(
+        _ request: URLRequest,
+        progressCallback: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> AIProxyResponseWithHeaders<Data> {
+        let session = self.serviceNetworker.urlSession
+        if let progressCallback {
+            (session.delegate as? AIProxyCertificatePinningDelegate)?.progressCallback = progressCallback
+        }
+        let (data, response) = try await session.data(
+            for: request,
+            delegate: session.delegate as? URLSessionTaskDelegate
+        )
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AIProxyError.assertion("Network response is not an http response")
+        }
+        if httpResponse.statusCode > 299 {
+            logIf(.error)?.error("Receieved a non-200 status code: \(httpResponse.statusCode)")
+            throw AIProxyHTTPError(
+                statusCode: httpResponse.statusCode,
+                responseData: data,
+                headers: httpResponse.readableHeaders
+            )
+        }
+        return AIProxyResponseWithHeaders(body: data, headers: httpResponse.readableHeaders)
+    }
+
+    private func makeRequestAndDeserializeResponse<T: Decodable & Sendable>(
+        _ request: URLRequest
+    ) async throws -> AIProxyResponseWithHeaders<T> {
+        if AIProxy.printRequestBodies {
+            printRequestBody(request)
+        }
+        let response = try await self.makeRequestAndWaitForData(request)
+        if AIProxy.printResponseBodies {
+            printBufferedResponseBody(response.body)
+        }
+        return AIProxyResponseWithHeaders(
+            body: try T.deserialize(from: response.body),
+            headers: response.headers
+        )
+    }
+
+    private func makeRequestAndDeserializeStreamingChunks<T: Decodable & Sendable>(
+        _ request: URLRequest
+    ) async throws -> AsyncThrowingStream<T, Error> {
+        if AIProxy.printRequestBodies {
+            printRequestBody(request)
+        }
+        let session = self.serviceNetworker.urlSession
+        let (asyncBytes, response) = try await session.bytes(
+            for: request,
+            delegate: session.delegate as? URLSessionTaskDelegate
+        )
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AIProxyError.assertion("Network response is not an http response")
+        }
+        if httpResponse.statusCode > 299 {
+            var responseBody = ""
+            // Keep the existing text format for streaming HTTP errors.
+            for try await line in asyncBytes.lines {
+                responseBody += line
+            }
+            throw AIProxyHTTPError(
+                statusCode: httpResponse.statusCode,
+                responseData: Data(responseBody.utf8),
+                headers: httpResponse.readableHeaders
+            )
+        }
+        return self.serviceNetworker.decodeStreamingChunks(asyncBytes)
+    }
+
     private func buildConversationsQueryString(
         limit: Int? = nil,
         order: OpenAIItemOrder? = nil,
@@ -732,6 +852,7 @@ extension OpenAIService {
         return try await self.embeddingRequest(body: body, secondsToWait: 60, additionalHeaders: additionalHeaders)
     }
 
+    /// Forwards to `createResponse`, including its `AIProxyHTTPError` catch contract.
     @available(*, deprecated, message: "This has been renamed to createResponse(body:secondsToWait:). For parity with your existing call, pass 60 as the secondsToWait argument.")
     public func createResponse(
         requestBody: OpenAICreateResponseRequestBody,
@@ -740,6 +861,7 @@ extension OpenAIService {
         return try await self.createResponse(requestBody: requestBody, secondsToWait: 60, additionalHeaders: additionalHeaders)
     }
 
+    /// Forwards to `createStreamingResponse`, including its `AIProxyHTTPError` catch contract.
     @available(*, deprecated, message: "This has been renamed to createStreamingResponse(body:secondsToWait:). For parity with your existing call, pass 60 as the secondsToWait argument.")
     public func createStreamingResponse(
         requestBody: OpenAICreateResponseRequestBody,

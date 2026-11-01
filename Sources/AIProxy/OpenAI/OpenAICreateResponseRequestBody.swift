@@ -99,7 +99,11 @@ nonisolated public struct OpenAICreateResponseRequestBody: Encodable, Sendable {
     /// A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse.
     public let user: String?
 
+    /// Whether to run generation in the background. Omitted unless explicitly supplied.
+    public let background: Bool?
+
     private enum CodingKeys: String, CodingKey {
+        case background
         case include
         case input
         case instructions
@@ -145,7 +149,8 @@ nonisolated public struct OpenAICreateResponseRequestBody: Encodable, Sendable {
         tools: [OpenAICreateResponseRequestBody.Tool]? = nil,
         topP: Double? = nil,
         truncation: OpenAICreateResponseRequestBody.Truncation? = nil,
-        user: String? = nil
+        user: String? = nil,
+        background: Bool? = nil
     ) {
         self.include = include
         self.input = input
@@ -167,6 +172,7 @@ nonisolated public struct OpenAICreateResponseRequestBody: Encodable, Sendable {
         self.topP = topP
         self.truncation = truncation
         self.user = user
+        self.background = background
     }
 
     // For naming consistency with sdkVersion <= 0.120.0

@@ -13,6 +13,37 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
     let partialKey: String
     let serviceURL: String?
     let clientID: String?
+    #if DEBUG
+    // Per-builder override for deterministic tests; excluded from release builds.
+    let deviceCheckTokenProvider: (@AIProxyActor @Sendable (String?) async -> String?)?
+    #endif
+
+    nonisolated init(
+        partialKey: String,
+        serviceURL: String?,
+        clientID: String?
+    ) {
+        self.partialKey = partialKey
+        self.serviceURL = serviceURL
+        self.clientID = clientID
+        #if DEBUG
+        self.deviceCheckTokenProvider = nil
+        #endif
+    }
+
+    #if DEBUG
+    nonisolated init(
+        partialKey: String,
+        serviceURL: String?,
+        clientID: String?,
+        deviceCheckTokenProvider: @escaping @AIProxyActor @Sendable (String?) async -> String?
+    ) {
+        self.partialKey = partialKey
+        self.serviceURL = serviceURL
+        self.clientID = clientID
+        self.deviceCheckTokenProvider = deviceCheckTokenProvider
+    }
+    #endif
 
     func jsonPOST(
         path: String,
@@ -26,9 +57,8 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
             additionalHeaders["aiproxy-permitted-upstream"] = permittedUpstream
         }
         return try await AIProxyURLRequest.create(
-            partialKey: self.partialKey,
+            builder: self,
             serviceURL: self.serviceURL ?? legacyURL,
-            clientID: self.clientID,
             proxyPath: path,
             body: try body.serialize(),
             verb: .post,
@@ -51,9 +81,8 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
         }
         let boundary = UUID().uuidString
         return try await AIProxyURLRequest.create(
-            partialKey: self.partialKey,
+            builder: self,
             serviceURL: self.serviceURL ?? legacyURL,
-            clientID: self.clientID,
             proxyPath: path,
             body: formEncode(body, boundary),
             verb: .post,
@@ -74,9 +103,8 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
             additionalHeaders["aiproxy-permitted-upstream"] = permittedUpstream
         }
         return try await AIProxyURLRequest.create(
-            partialKey: self.partialKey,
+            builder: self,
             serviceURL: self.serviceURL ?? legacyURL,
-            clientID: self.clientID,
             proxyPath: path,
             body: nil,
             verb: .get,
@@ -96,9 +124,8 @@ nonisolated private let legacyURL = "https://api.aiproxy.pro"
             additionalHeaders["aiproxy-permitted-upstream"] = permittedUpstream
         }
         return try await AIProxyURLRequest.create(
-            partialKey: self.partialKey,
+            builder: self,
             serviceURL: self.serviceURL ?? legacyURL,
-            clientID: self.clientID,
             proxyPath: path,
             body: nil,
             verb: .delete,

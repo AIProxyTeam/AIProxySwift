@@ -80,7 +80,7 @@ nonisolated public struct OpenAIResponse: Decodable, Sendable {
     public let reasoning: Reasoning?
 
     /// The status of the response generation.
-    /// One of `completed`, `failed`, `in_progress`, or `incomplete`.
+    /// One of `queued`, `in_progress`, `completed`, `failed`, `incomplete`, or `cancelled`.
     public let status: Status?
 
     /// This field is not well-named; it's a configuration field that controls the response text, not the response text itself.
@@ -223,15 +223,15 @@ nonisolated public struct OpenAIResponse: Decodable, Sendable {
 extension OpenAIResponse {
     nonisolated public struct IncompleteDetails: Decodable, Sendable {
         /// The reason why the response is incomplete.
-        let reason: String
+        public let reason: String
     }
 
     nonisolated public struct ResponseError: Decodable, Sendable {
         /// The error code for the response.
-        let code: String
+        public let code: String
 
         /// A human-readable description of the error.
-        let message: String
+        public let message: String
     }
 
     nonisolated public struct Reasoning: Decodable, Sendable {
@@ -253,10 +253,12 @@ extension OpenAIResponse {
     }
 
     nonisolated public enum Status: String, Decodable, Sendable {
+        case queued
         case completed
         case failed
         case incomplete
         case inProgress = "in_progress"
+        case cancelled
     }
 
     /// Represents the literal options: "none", "auto", or "required".
@@ -526,6 +528,7 @@ extension OpenAIResponse {
 
         private enum CodingKeys: String, CodingKey {
             case type
+            case refusal
         }
 
         public init(from decoder: Decoder) throws {
@@ -536,8 +539,7 @@ extension OpenAIResponse {
             case "output_text":
                 self = .outputText(try OutputText(from: decoder))
             case "refusal":
-                let container = try decoder.container(keyedBy: CodingKeys.self)
-                self = .refusal(try container.decode(String.self, forKey: .type))
+                self = .refusal(try container.decode(String.self, forKey: .refusal))
             default:
                 throw DecodingError.dataCorruptedError(
                     forKey: .type,
