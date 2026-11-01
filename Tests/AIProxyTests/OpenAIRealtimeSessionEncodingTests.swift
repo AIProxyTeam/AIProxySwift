@@ -187,7 +187,10 @@ struct OpenAIRealtimeSessionEncodingTests {
             Issue.record("Expected error event")
             return
         }
-        #expect(err.errorBody?.contains("Unknown parameter") == true)
+        #expect(err.error?.message == "Unknown parameter: 'session.input_audio_format'.")
+        #expect(err.error?.type == "invalid_request_error")
+        #expect(err.error?.code == "unknown_parameter")
+        #expect(err.eventID == "event_test")
     }
 
     private static func jsonObject(_ data: Data) throws -> Any {
