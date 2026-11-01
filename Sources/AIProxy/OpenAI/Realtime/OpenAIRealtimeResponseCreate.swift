@@ -36,6 +36,10 @@ extension OpenAIRealtimeResponseCreate {
         public var modalities: [OpenAIRealtimeSessionConfiguration.Modality]? { outputModalities }
         public let toolChoice: OpenAIRealtimeSessionConfiguration.ToolChoice?
         public let tools: [Tool]?
+        /// Optional reasoning settings for models that support Realtime Reasoning.
+        public let reasoning: OpenAIRealtimeReasoning?
+        /// Whether the model may call multiple tools in parallel. Omitted when nil.
+        public let parallelToolCalls: Bool?
 
         private enum CodingKeys: String, CodingKey {
             case conversation
@@ -43,6 +47,8 @@ extension OpenAIRealtimeResponseCreate {
             case outputModalities = "output_modalities"
             case toolChoice = "tool_choice"
             case tools
+            case reasoning
+            case parallelToolCalls = "parallel_tool_calls"
         }
 
         public init(
@@ -50,13 +56,17 @@ extension OpenAIRealtimeResponseCreate {
             instructions: String? = nil,
             outputModalities: [OpenAIRealtimeSessionConfiguration.Modality]? = nil,
             tools: [Tool]? = nil,
-            toolChoice: OpenAIRealtimeSessionConfiguration.ToolChoice? = nil
+            toolChoice: OpenAIRealtimeSessionConfiguration.ToolChoice? = nil,
+            reasoning: OpenAIRealtimeReasoning? = nil,
+            parallelToolCalls: Bool? = nil
         ) {
             self.conversation = conversation
             self.instructions = instructions
             self.outputModalities = outputModalities
             self.tools = tools
             self.toolChoice = toolChoice
+            self.reasoning = reasoning
+            self.parallelToolCalls = parallelToolCalls
         }
 
         /// Deprecated initializer preserved for source compatibility.
@@ -67,14 +77,18 @@ extension OpenAIRealtimeResponseCreate {
             instructions: String? = nil,
             modalities: [OpenAIRealtimeSessionConfiguration.Modality]? = nil,
             tools: [Tool]? = nil,
-            toolChoice: OpenAIRealtimeSessionConfiguration.ToolChoice? = nil
+            toolChoice: OpenAIRealtimeSessionConfiguration.ToolChoice? = nil,
+            reasoning: OpenAIRealtimeReasoning? = nil,
+            parallelToolCalls: Bool? = nil
         ) {
             self.init(
                 conversation: conversation,
                 instructions: instructions,
                 outputModalities: modalities,
                 tools: tools,
-                toolChoice: toolChoice
+                toolChoice: toolChoice,
+                reasoning: reasoning,
+                parallelToolCalls: parallelToolCalls
             )
         }
 
@@ -85,6 +99,8 @@ extension OpenAIRealtimeResponseCreate {
             try container.encodeIfPresent(outputModalities, forKey: .outputModalities)
             try container.encodeIfPresent(tools, forKey: .tools)
             try container.encodeIfPresent(toolChoice, forKey: .toolChoice)
+            try container.encodeIfPresent(reasoning, forKey: .reasoning)
+            try container.encodeIfPresent(parallelToolCalls, forKey: .parallelToolCalls)
         }
     }
 }
