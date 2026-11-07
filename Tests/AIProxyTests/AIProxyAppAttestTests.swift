@@ -523,7 +523,11 @@ struct AIProxyAppAttestClientTests {
 
     @Test("attestIfNeeded and verifyAppAttest refuse to run until configure chose App Attest")
     func requiresConfigure() async throws {
+        // Other suites run in parallel and build proxied requests through the global verification
+        // method, so this test never switches the global configuration to App Attest. Nothing in
+        // the test target configures App Attest globally, so the default of DeviceCheck applies here.
         AIProxy.configure(logLevel: .warning, printRequestBodies: false, printResponseBodies: false, resolveDNSOverTLS: false, useStableID: false)
+        #expect(AIProxy.verificationMethod == .deviceCheck)
         await #expect(throws: AIProxyError.appAttestNotConfigured) {
             try await AIProxy.attestIfNeeded()
         }
@@ -531,11 +535,17 @@ struct AIProxyAppAttestClientTests {
             _ = try await AIProxy.verifyAppAttest()
         }
 
+        // `configure` stores the method verbatim; the lookup derives the client scope from it.
+        let configuration = AIProxyConfiguration(
+            resolveDNSOverTLS: false,
+            printRequestBodies: false,
+            printResponseBodies: false,
+            useStableID: false,
+            verificationMethod: .appAttest(appURL: "https://api.aiproxy.com/dd6bcfd0")
+        )
         AIProxyAppAttestClient.resetSharedClients()
         defer { AIProxyAppAttestClient.resetSharedClients() }
-        AIProxy.configure(logLevel: .warning, printRequestBodies: false, printResponseBodies: false, resolveDNSOverTLS: false, useStableID: false,
-                          verificationMethod: .appAttest(appURL: "https://api.aiproxy.com/dd6bcfd0"))
-        let client = try AIProxy.configuredAppAttestClient()
+        let client = try AIProxy.configuredAppAttestClient(method: configuration.verificationMethod)
         #expect(client.scope == "https://api.aiproxy.com#dd6bcfd0")
     }
 }

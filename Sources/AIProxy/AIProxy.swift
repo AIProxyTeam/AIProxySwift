@@ -194,8 +194,10 @@ public enum AIProxy {
     }
 
     /// The shared client for the app named in `configure`, or `appAttestNotConfigured`.
-    nonisolated static func configuredAppAttestClient() throws -> AIProxyAppAttestClient {
-        guard case .appAttest(let appURL) = verificationMethod else {
+    nonisolated static func configuredAppAttestClient(
+        method: AIProxyVerificationMethod = AIProxy.verificationMethod
+    ) throws -> AIProxyAppAttestClient {
+        guard case .appAttest(let appURL) = method else {
             throw AIProxyError.appAttestNotConfigured
         }
         return try AIProxyAppAttestClient.shared(for: appURL)
