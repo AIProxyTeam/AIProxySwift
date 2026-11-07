@@ -19,6 +19,7 @@ included:
 - OpenRouter
 - DeepSeek
 - Fireworks AI
+- Runcrate
 - Brave
 
 Your initialization code determines whether requests go straight to the provider or are
@@ -185,6 +186,7 @@ Once you're happy with your changes, open a PR here.
 * [OpenRouter](#openrouter)
 * [DeepSeek](#deepseek)
 * [Fireworks AI](#fireworks-ai)
+* [Runcrate](#runcrate)
 * [Brave](#brave)
 * [gRPC](#grpc)
 * [Advanced Settings](#advanced-settings)
@@ -7156,6 +7158,123 @@ not on the messages's `reasoningContent` property. Instead, the reasoning conten
         print("Could not complete R1 request to FireworksAI. Please check your internet connection")
     } catch {
         print("Could not complete R1 request to FireworksAI: \(error)")
+    }
+```
+
+***
+
+## Runcrate
+
+[Runcrate](https://runcrate.ai) serves open-weight models (DeepSeek, Qwen, Kimi, GLM, gpt-oss and
+more) behind an OpenAI compatible API, so the Runcrate service reuses this library's OpenAI request
+and response types. When you create a service in the AIProxy dashboard, use
+`https://api.runcrate.ai` as the proxy base URL. See https://runcrate.ai/docs for the model list.
+
+### How to make a chat completion request with Runcrate
+
+```swift
+    import AIProxy
+
+    /* Uncomment for BYOK use cases */
+    // let runcrateService = AIProxy.runcrateDirectService(
+    //     unprotectedAPIKey: "your-runcrate-key"
+    // )
+
+    /* Uncomment for all other production use cases */
+    // let runcrateService = AIProxy.runcrateService(
+    //     partialKey: "partial-key-from-your-developer-dashboard",
+    //     serviceURL: "service-url-from-your-developer-dashboard"
+    // )
+
+    let requestBody = OpenAIChatCompletionRequestBody(
+        model: "deepseek-ai/DeepSeek-V4-Flash",
+        messages: [
+            .system(content: .text("You are a helpful assistant.")),
+            .user(content: .text("Hello!"))
+        ],
+        maxCompletionTokens: 300
+    )
+
+    do {
+        let response = try await runcrateService.chatCompletionRequest(body: requestBody)
+        print(response.choices.first?.message.content ?? "")
+        if let usage = response.usage {
+            print("Used \(usage.totalTokens ?? 0) total tokens")
+        }
+    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+        print("Received non-200 status code: \(statusCode) with response body: \(responseBody)")
+    } catch {
+        print("Could not get Runcrate chat completion: \(error)")
+    }
+```
+
+### How to make a streaming chat completion with Runcrate
+
+```swift
+    import AIProxy
+
+    /* Uncomment for BYOK use cases */
+    // let runcrateService = AIProxy.runcrateDirectService(
+    //     unprotectedAPIKey: "your-runcrate-key"
+    // )
+
+    /* Uncomment for all other production use cases */
+    // let runcrateService = AIProxy.runcrateService(
+    //     partialKey: "partial-key-from-your-developer-dashboard",
+    //     serviceURL: "service-url-from-your-developer-dashboard"
+    // )
+
+    let requestBody = OpenAIChatCompletionRequestBody(
+        model: "openai/gpt-oss-120b",
+        messages: [
+            .user(content: .text("Write a haiku about Swift."))
+        ],
+        maxCompletionTokens: 300
+    )
+
+    do {
+        let stream = try await runcrateService.streamingChatCompletionRequest(body: requestBody)
+        for try await chunk in stream {
+            print(chunk.choices.first?.delta.content ?? "")
+            if let usage = chunk.usage {
+                print("Used \(usage.totalTokens ?? 0) total tokens")
+            }
+        }
+    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+        print("Received non-200 status code: \(statusCode) with response body: \(responseBody)")
+    } catch {
+        print("Could not make streaming Runcrate request: \(error)")
+    }
+```
+
+### How to create embeddings with Runcrate
+
+```swift
+    import AIProxy
+
+    /* Uncomment for BYOK use cases */
+    // let runcrateService = AIProxy.runcrateDirectService(
+    //     unprotectedAPIKey: "your-runcrate-key"
+    // )
+
+    /* Uncomment for all other production use cases */
+    // let runcrateService = AIProxy.runcrateService(
+    //     partialKey: "partial-key-from-your-developer-dashboard",
+    //     serviceURL: "service-url-from-your-developer-dashboard"
+    // )
+
+    let requestBody = OpenAIEmbeddingRequestBody(
+        input: .text("hello world"),
+        model: "Qwen/Qwen3-Embedding-8B"
+    )
+
+    do {
+        let response = try await runcrateService.embeddingRequest(body: requestBody)
+        print("Received an embedding with \(response.embeddings.first?.vector.count ?? 0) dimensions")
+    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+        print("Received non-200 status code: \(statusCode) with response body: \(responseBody)")
+    } catch {
+        print("Could not create Runcrate embedding: \(error)")
     }
 ```
 
