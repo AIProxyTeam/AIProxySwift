@@ -80,31 +80,6 @@ public actor AIProxyAppAttestClient {
         }
     }
 
-    /// Starts the one-time attestation for an app in the background, so it
-    /// lands at launch rather than on the user's first request. `AIProxy.configure`
-    /// calls this with the app URL. Failures are logged; the first request retries.
-    nonisolated static func warmUp(appURL: String) {
-        guard let client = try? shared(for: appURL) else {
-            logIf(.error)?.error("AIProxy: the App Attest appURL is not an AIProxy app URL (expected https://api.aiproxy.com/<app>): \(appURL)")
-            return
-        }
-        guard client.isSupported else { return }
-        Task {
-            do {
-                try await client.attestIfNeeded()
-            } catch {
-                logIf(.warning)?.warning("AIProxy: App Attest warm-up did not complete; the first request will attest: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    /// Every client created so far in this process, one per AIProxy app.
-    nonisolated static var allShared: [AIProxyAppAttestClient] {
-        sharedClientsLock.lock()
-        defer { sharedClientsLock.unlock() }
-        return Array(sharedClients.values)
-    }
-
     nonisolated(unsafe) private static var sharedClients: [String: AIProxyAppAttestClient] = [:]
     private static let sharedClientsLock = NSLock()
 
@@ -254,6 +229,66 @@ public actor AIProxyAppAttestClient {
         let headers = try await signatureHeaders(method: request.httpMethod ?? "GET", url: url, body: request.httpBody)
         for (name, value) in headers {
             request.setValue(value, forHTTPHeaderField: name)
+        }
+    }
+
+    /// The outcome of ``verify(bypassToken:)``.
+    public struct Verification: Decodable, Equatable, Sendable {
+        /// `"assertion"` when a real assertion verified, `"bypass"` when the
+        /// Simulator bypass token was accepted instead (no assertion checked).
+        public let mode: String
+        public let keyID: String?
+        /// `"development"` for Xcode builds, `"production"` for App Store and TestFlight builds.
+        public let environment: String?
+        public let verifyMs: Int?
+        /// Present in bypass mode: a reminder that App Attest itself was not exercised.
+        public let note: String?
+
+        enum CodingKeys: String, CodingKey {
+            case mode, environment, note
+            case keyID = "key_id"
+            case verifyMs = "verify_ms"
+        }
+    }
+
+    /// Exercises the whole App Attest path against AIProxy without calling a
+    /// provider: registers if needed, signs a request exactly as a service
+    /// request is signed, and has AIProxy verify it on the app's
+    /// `aiproxy/v1/attest/verify` route. A rejection throws
+    /// `AIProxyError.unsuccessfulRequest` whose body carries the same
+    /// `error.type` a real request would get (`app_attest_failed`,
+    /// `app_attest_stale`, and so on). On hardware without App Attest the
+    /// bypass token is sent instead when given, and the result says so.
+    public func verify(bypassToken: String? = nil) async throws -> Verification {
+        let url = host.appendingPathComponent(projectID).appendingPathComponent("aiproxy/v1/attest/verify")
+        let body = Data("{}".utf8)
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = body
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(await clientID(), forHTTPHeaderField: "aiproxy-client-id")
+        request.setValue(await AIProxyUtils.metadataHeader(withBodySize: body.count), forHTTPHeaderField: "aiproxy-metadata")
+
+        if isSupported {
+            for (name, value) in try await signatureHeaders(method: "POST", url: url, body: body) {
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+        } else if let bypassToken {
+            request.setValue(bypassToken, forHTTPHeaderField: AIProxyAppAttestHeaders.bypass)
+        } else {
+            throw AIProxyError.appAttestIsUnavailable
+        }
+
+        let (data, http) = try await transport.data(for: request)
+        guard (200..<300).contains(http.statusCode) else {
+            let responseBody = String(decoding: data.prefix(4096), as: UTF8.self)
+            Self.noteRejection(responseBody: responseBody, requestURL: url)
+            throw AIProxyError.unsuccessfulRequest(statusCode: http.statusCode, responseBody: responseBody)
+        }
+        do {
+            return try JSONDecoder().decode(Verification.self, from: data)
+        } catch {
+            throw AIProxyError.appAttestMalformedResponse(route: "verify")
         }
     }
 

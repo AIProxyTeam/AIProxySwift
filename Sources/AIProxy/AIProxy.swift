@@ -81,15 +81,16 @@ public enum AIProxy {
     ///   - verificationMethod:  How requests prove they come from your app on a real device. Must match the
     ///                          verification method of your services in the AIProxy dashboard.
     ///                          `.deviceCheck` (the default) sends a DeviceCheck token with every request.
-    ///                          `.appAttest(appURL:)` attests the install once with Apple's App Attest, starting
-    ///                          now in the background, and then signs every request with a Secure Enclave key.
-    ///                          `appURL` is shown on the App Attest tab of the dashboard (`https://api.aiproxy.com/<app>`).
+    ///                          `.appAttest(appURL:)` attests the install once with Apple's App Attest and then signs
+    ///                          every request with a Secure Enclave key. `appURL` is shown on the App Attest tab of
+    ///                          the dashboard (`https://api.aiproxy.com/<app>`). Follow `configure` with
+    ///                          `try await AIProxy.attestIfNeeded()` so the one-time attestation happens at launch
+    ///                          and its errors reach you; otherwise it happens on the first request.
     ///                          App Attest requires:
     ///                              1. The App Attest capability on your target (Signing & Capabilities > + Capability > App Attest)
     ///                              2. A `serviceURL` on every service you create
     ///                              3. The App Attest tab of your app in the dashboard filled in with your team ID and bundle ID
     ///                          On the Simulator, set the `AIPROXY_APP_ATTEST_BYPASS` env variable from that tab.
-    ///                          `AIProxy.attestIfNeeded()` awaits the attestation if you want to surface a failure early.
     nonisolated public static func configure(
         logLevel: AIProxyLogLevel,
         printRequestBodies: Bool,
@@ -113,11 +114,6 @@ public enum AIProxy {
                     self.configuration?.stableID = newStableID
                 }
             }
-        }
-        // The one-time attestation happens now, at launch, so that it never lands on the
-        // user's first request. No-op on the Simulator, where the bypass token is used.
-        if case .appAttest(let appURL) = verificationMethod {
-            AIProxyAppAttestClient.warmUp(appURL: appURL)
         }
     }
 
@@ -168,17 +164,41 @@ public enum AIProxy {
         self.configuration?.verificationMethod ?? .deviceCheck
     }
 
-    /// Waits for the one-time App Attest registration that `AIProxy.configure` started for
-    /// `verificationMethod: .appAttest(appURL:)`. Optional: call it when you want to surface a
-    /// registration failure before the user's first request rather than on it.
+    /// Performs the one-time App Attest registration for the app named in `configure`, if this
+    /// install has not registered yet. Call it right after `configure`, at launch, so the few
+    /// seconds it takes land before the user's first request and so a failure reaches you here:
+    /// a team ID or bundle ID that does not match the dashboard, no network, or Apple refusing to
+    /// attest. If you never call it, the first request attests instead, slowly.
     ///
-    /// Does nothing on the Simulator or on hardware without a Secure Enclave, where requests fall back
-    /// to the `AIPROXY_APP_ATTEST_BYPASS` token. Throws `AIProxyError` when a registration fails; the
-    /// SDK backs off and retries on a later request, so a failure here is not fatal.
+    /// Does nothing on the Simulator or on hardware without a Secure Enclave, where requests fall
+    /// back to the `AIPROXY_APP_ATTEST_BYPASS` token. Throws `AIProxyError.appAttestNotConfigured`
+    /// when `configure` did not choose `.appAttest(appURL:)`.
     @AIProxyActor public static func attestIfNeeded() async throws {
-        for client in AIProxyAppAttestClient.allShared where client.isSupported {
-            try await client.attestIfNeeded()
+        let client = try configuredAppAttestClient()
+        guard client.isSupported else {
+            logIf(.info)?.info("AIProxy: App Attest is not supported on this device, skipping attestation")
+            return
         }
+        try await client.attestIfNeeded()
+    }
+
+    /// Tests the App Attest integration end to end without calling a provider: registers if
+    /// needed, signs a request the way every service request is signed, and has AIProxy verify it.
+    /// Use it from a debug screen or a UI test. The result says whether a real assertion verified
+    /// or the Simulator bypass token was accepted. A rejection throws
+    /// `AIProxyError.unsuccessfulRequest` carrying the same `error.type` a real request would get.
+    /// See https://www.aiproxy.com/docs/testing-app-attest.html
+    @AIProxyActor public static func verifyAppAttest() async throws -> AIProxyAppAttestClient.Verification {
+        let client = try configuredAppAttestClient()
+        return try await client.verify(bypassToken: ProcessInfo.processInfo.environment["AIPROXY_APP_ATTEST_BYPASS"])
+    }
+
+    /// The shared client for the app named in `configure`, or `appAttestNotConfigured`.
+    nonisolated static func configuredAppAttestClient() throws -> AIProxyAppAttestClient {
+        guard case .appAttest(let appURL) = verificationMethod else {
+            throw AIProxyError.appAttestNotConfigured
+        }
+        return try AIProxyAppAttestClient.shared(for: appURL)
     }
 
 

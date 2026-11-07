@@ -7572,11 +7572,28 @@ struct MyApp: App {
 }
 ```
 
-`configure` starts the one-time registration with Apple and AIProxy (about a second) in the
-background right there at launch, so it never lands on the user's first request. All services in
-the same AIProxy app share one key, so it happens once per install however many providers you use.
-If you would rather know about a registration failure up front, `try await AIProxy.attestIfNeeded()`
-waits for it.
+4. Follow `configure` with `AIProxy.attestIfNeeded()`. It performs the one-time registration with
+   Apple and AIProxy (about a second) on a fresh install and does nothing afterwards, so calling it
+   at launch keeps that cost off the user's first request and puts any failure in your hands:
+
+```swift
+Task {
+    do {
+        try await AIProxy.attestIfNeeded()
+    } catch {
+        // A team ID or bundle ID that does not match the dashboard, no network, or Apple refused.
+        // The app still works: the first request attests again. Log it, or show a message.
+        print("App Attest registration failed: \(error)")
+    }
+}
+```
+
+All services in the same AIProxy app share one key, so registration happens once per install
+however many providers you use. If you skip this call, the first request attests instead, slowly.
+
+To check the whole integration without calling a provider, `AIProxy.verifyAppAttest()` signs a
+request and has AIProxy verify it, returning whether a real assertion verified or the Simulator
+bypass token was accepted. See [Testing App Attest end to end](https://www.aiproxy.com/docs/testing-app-attest.html).
 
 The SDK stores the attested key ID in the Keychain and reuses it for the life of the install. If
 AIProxy ever reports the key as unknown (for example after the app's App Attest configuration is
@@ -7585,6 +7602,7 @@ invalid, the SDK replaces it once and retries the signature.
 
 Errors specific to App Attest are cases of `AIProxyError`:
 
+- `.appAttestNotConfigured`: `attestIfNeeded` or `verifyAppAttest` was called without `verificationMethod: .appAttest(appURL:)` in `configure`
 - `.appAttestIsUnavailable`: the device has no Secure Enclave and no bypass token is set
 - `.appAttestBypassIsMissing`: running on the simulator without `AIPROXY_APP_ATTEST_BYPASS`
 - `.appAttestRequiresServiceURL`: a service was created without a `serviceURL`

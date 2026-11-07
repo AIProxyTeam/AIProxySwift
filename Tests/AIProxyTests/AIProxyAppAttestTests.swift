@@ -97,6 +97,7 @@ final class ScriptedTransport: AIProxyAppAttestHTTPTransport, @unchecked Sendabl
     private var _requests: [URLRequest] = []
     var challengeResponse: Response
     var registerResponse: Response
+    var verifyResponse = Response(status: 200, body: Data(#"{"verified":true,"mode":"assertion","key_id":"key-1","environment":"development","verify_ms":3}"#.utf8))
 
     init(challenge: Data = Data(repeating: 7, count: 32)) {
         let challengeBody = try! JSONEncoder().encode(["challenge": challenge.base64EncodedString(), "expires_in": "300"])
@@ -113,7 +114,9 @@ final class ScriptedTransport: AIProxyAppAttestHTTPTransport, @unchecked Sendabl
         let scripted = lock.withLock {
             _requests.append(request)
             let path = request.url?.path ?? ""
-            return path.hasSuffix("/challenge") ? challengeResponse : registerResponse
+            if path.hasSuffix("/challenge") { return challengeResponse }
+            if path.hasSuffix("/verify") { return verifyResponse }
+            return registerResponse
         }
         let http = HTTPURLResponse(
             url: request.url!,
@@ -461,6 +464,78 @@ struct AIProxyAppAttestClientTests {
         let c = try AIProxyAppAttestClient.shared(for: "https://api.aiproxy.com/eeeeeeee/c27411bd")
         #expect(a === b)
         #expect(a !== c)
-        #expect(AIProxyAppAttestClient.allShared.count == 2)
+    }
+
+    @Test("verify registers if needed, signs the verify route, and returns AIProxy's verdict")
+    func verifyRoundTrip() async throws {
+        let attestation = FakeAttestationService()
+        let transport = ScriptedTransport()
+        let client = makeClient(attestation: attestation, transport: transport)
+
+        let result = try await client.verify()
+
+        #expect(result == .init(mode: "assertion", keyID: "key-1", environment: "development", verifyMs: 3, note: nil))
+        let requests = transport.requests
+        #expect(requests.count == 3, "challenge, register, then verify")
+        let verify = requests[2]
+        #expect(verify.url?.absoluteString == "https://api.aiproxy.com/dd6bcfd0/aiproxy/v1/attest/verify")
+        #expect(verify.httpMethod == "POST")
+        #expect(verify.value(forHTTPHeaderField: AIProxyAppAttestHeaders.keyID) == "key-1")
+        #expect(verify.value(forHTTPHeaderField: AIProxyAppAttestHeaders.assertion) != nil)
+        #expect(verify.value(forHTTPHeaderField: "aiproxy-client-id") == "client-1")
+
+        // The assertion covers the verify route's own path and the `{}` body.
+        let expected = AIProxyAppAttestSigning.clientDataHash(
+            method: "POST", path: "/dd6bcfd0/aiproxy/v1/attest/verify", body: Data("{}".utf8),
+            nonce: "AAAAAAAAAAAAAAAAAAAAAA==", timestamp: 1_700_000_000, keyID: "key-1"
+        )
+        #expect(attestation.assertionCalls.last?.clientDataHash == expected)
+    }
+
+    @Test("verify surfaces AIProxy's rejection with the server's error type")
+    func verifyRejected() async throws {
+        let transport = ScriptedTransport()
+        transport.verifyResponse = .init(status: 403, body: Data(#"{"error":{"type":"app_attest_stale","message":"clock"}}"#.utf8))
+        let client = makeClient(transport: transport)
+
+        await #expect(throws: AIProxyError.unsuccessfulRequest(statusCode: 403, responseBody: #"{"error":{"type":"app_attest_stale","message":"clock"}}"#)) {
+            _ = try await client.verify()
+        }
+    }
+
+    @Test("verify falls back to the bypass token where App Attest is unsupported, and fails without one")
+    func verifyBypass() async throws {
+        let attestation = FakeAttestationService()
+        attestation.setSupported(false)
+        let transport = ScriptedTransport()
+        transport.verifyResponse = .init(status: 200, body: Data(#"{"verified":true,"mode":"bypass","note":"no assertion"}"#.utf8))
+        let client = makeClient(attestation: attestation, transport: transport)
+
+        let result = try await client.verify(bypassToken: "bypass-uuid")
+        #expect(result.mode == "bypass")
+        #expect(transport.requests.last?.value(forHTTPHeaderField: AIProxyAppAttestHeaders.bypass) == "bypass-uuid")
+        #expect(transport.requests.last?.value(forHTTPHeaderField: AIProxyAppAttestHeaders.keyID) == nil)
+
+        await #expect(throws: AIProxyError.appAttestIsUnavailable) {
+            _ = try await client.verify()
+        }
+    }
+
+    @Test("attestIfNeeded and verifyAppAttest refuse to run until configure chose App Attest")
+    func requiresConfigure() async throws {
+        AIProxy.configure(logLevel: .warning, printRequestBodies: false, printResponseBodies: false, resolveDNSOverTLS: false, useStableID: false)
+        await #expect(throws: AIProxyError.appAttestNotConfigured) {
+            try await AIProxy.attestIfNeeded()
+        }
+        await #expect(throws: AIProxyError.appAttestNotConfigured) {
+            _ = try await AIProxy.verifyAppAttest()
+        }
+
+        AIProxyAppAttestClient.resetSharedClients()
+        defer { AIProxyAppAttestClient.resetSharedClients() }
+        AIProxy.configure(logLevel: .warning, printRequestBodies: false, printResponseBodies: false, resolveDNSOverTLS: false, useStableID: false,
+                          verificationMethod: .appAttest(appURL: "https://api.aiproxy.com/dd6bcfd0"))
+        let client = try AIProxy.configuredAppAttestClient()
+        #expect(client.scope == "https://api.aiproxy.com#dd6bcfd0")
     }
 }

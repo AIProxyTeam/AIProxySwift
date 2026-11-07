@@ -65,6 +65,10 @@ nonisolated public enum AIProxyError: LocalizedError, Equatable, Sendable {
     /// App Attest does not exist on simulators, so the bypass token stands in for it during development.
     case appAttestBypassIsMissing
 
+    /// `AIProxy.attestIfNeeded()` or `AIProxy.verifyAppAttest()` was called, but `AIProxy.configure` did not
+    /// choose `verificationMethod: .appAttest(appURL:)`.
+    case appAttestNotConfigured
+
     /// App Attest needs the app and service segments of a `serviceURL` to find its attestation routes.
     /// Raised when a service was created without a `serviceURL` (the legacy `api.aiproxy.pro` form).
     case appAttestRequiresServiceURL
@@ -101,6 +105,8 @@ nonisolated public enum AIProxyError: LocalizedError, Equatable, Sendable {
             return "AIProxy - Apple's App Attest is not available on this device, and no AIPROXY_APP_ATTEST_BYPASS env variable is set. App Attest requires a physical device with a Secure Enclave."
         case .appAttestBypassIsMissing:
             return "AIProxy - You are running on a simulator without setting the AIPROXY_APP_ATTEST_BYPASS env variable. Copy the bypass token from the App Attest tab of the AIProxy dashboard into your Xcode scheme's environment variables."
+        case .appAttestNotConfigured:
+            return "AIProxy - App Attest is not configured. Call AIProxy.configure with verificationMethod: .appAttest(appURL: \"https://api.aiproxy.com/<app>\") first; the app URL is on the App Attest tab of the dashboard."
         case .appAttestRequiresServiceURL:
             return "AIProxy - App Attest needs the AIProxy app: pass the appURL shown on the App Attest tab of the dashboard (https://api.aiproxy.com/<app>) to AIProxy.configure, and the serviceURL shown for each service when creating it. The legacy partial-key-only initializers cannot use App Attest."
         case .appAttestKeyInvalidated:
