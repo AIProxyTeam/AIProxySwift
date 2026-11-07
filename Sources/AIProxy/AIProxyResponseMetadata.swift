@@ -29,3 +29,29 @@ nonisolated public struct AIProxyChunkStreamResponse<Chunk: Sendable>: Sendable 
         self.stream = stream
     }
 }
+
+/// An HTTP failure returned by any OpenAI REST operation, including requests that start a stream.
+/// OpenAI REST callers previously catching `AIProxyError.unsuccessfulRequest` must catch this type instead.
+/// Header field names should be compared case-insensitively.
+nonisolated public struct AIProxyHTTPError: LocalizedError, Sendable {
+    public let statusCode: Int
+    /// The HTTP error body. Buffered requests retain the original bytes.
+    /// Streaming requests contain UTF-8 text with line endings removed.
+    public let responseData: Data
+    public let headers: [String: String]
+
+    /// The response body decoded as UTF-8, or an empty string if decoding fails.
+    public var responseBody: String {
+        String(data: self.responseData, encoding: .utf8) ?? ""
+    }
+
+    public var errorDescription: String? {
+        "AIProxy - the request resulted in a status code of \(self.statusCode) with response body: \(self.responseBody)."
+    }
+
+    public init(statusCode: Int, responseData: Data, headers: [String: String]) {
+        self.statusCode = statusCode
+        self.responseData = responseData
+        self.headers = headers
+    }
+}

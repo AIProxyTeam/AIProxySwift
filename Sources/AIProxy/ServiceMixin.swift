@@ -44,6 +44,12 @@ extension ServiceMixin {
             request
         )
 
+        return self.decodeStreamingChunks(asyncBytes)
+    }
+
+    @AIProxyActor func decodeStreamingChunks<T: Decodable & Sendable>(
+        _ asyncBytes: URLSession.AsyncBytes
+    ) -> AsyncThrowingStream<T, Error> {
         let sequence = asyncBytes.lines.compactMap { @AIProxyActor [shouldPrint = AIProxy.printResponseBodies] (line: String) -> T? in
             if shouldPrint {
                 printStreamingResponseChunk(line)
@@ -147,7 +153,7 @@ private extension URLRequest {
     }
 }
 
-nonisolated private func printRequestBody(_ request: URLRequest) {
+nonisolated func printRequestBody(_ request: URLRequest) {
     logIf(.debug)?.debug(
         """
         Making a request to \(request.readableURL)
@@ -157,7 +163,7 @@ nonisolated private func printRequestBody(_ request: URLRequest) {
     )
 }
 
-nonisolated private func printBufferedResponseBody(_ data: Data) {
+nonisolated func printBufferedResponseBody(_ data: Data) {
     logIf(.debug)?.debug(
         """
         Received response body:
