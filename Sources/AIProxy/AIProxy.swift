@@ -978,6 +978,53 @@ public enum AIProxy {
         )
     }
 
+    /// AIProxy's Standard Compute service
+    ///
+    /// - Parameters:
+    ///   - partialKey: Your partial key is displayed in the AIProxy dashboard when you submit your Standard Compute key.
+    ///     AIProxy takes your Standard Compute key, encrypts it, and stores part of the result on our servers. The part that you include
+    ///     here is the other part. Both pieces are needed to decrypt your key and fulfill the request to Standard Compute.
+    ///
+    ///   - serviceURL: The service URL is displayed in the AIProxy dashboard when you submit your Standard Compute key.
+    ///
+    ///   - clientID: An optional clientID to attribute requests to specific users or devices. It is OK to leave this blank for
+    ///     most applications. You would set this if you already have an analytics system, and you'd like to annotate AIProxy
+    ///     requests with IDs that are known to other parts of your system.
+    ///
+    ///     If you do not supply your own clientID, the internals of this lib will generate UUIDs for you. The default UUIDs are
+    ///     persistent on macOS and can be accurately used to attribute all requests to the same device. The default UUIDs
+    ///     on iOS are pesistent until the end user chooses to rotate their vendor identification number.
+    ///
+    /// - Returns: An instance of StandardComputeService configured and ready to make requests
+    nonisolated public static func standardComputeService(
+        partialKey: String,
+        serviceURL: String,
+        clientID: String? = nil
+    ) -> StandardComputeService {
+        return StandardComputeProxiedService(
+            partialKey: partialKey,
+            serviceURL: serviceURL,
+            clientID: clientID
+        )
+    }
+
+    /// Service that makes request directly to Standard Compute. No protections are built-in for this service.
+    /// Please only use this for BYOK use cases.
+    ///
+    /// - Parameters:
+    ///   - unprotectedAPIKey: Your Standard Compute API key
+    ///   - baseURL: Optional base URL for the API requests. Defaults to https://api.stdcmpt.com
+    /// - Returns: An instance of StandardComputeService configured and ready to make requests
+    nonisolated public static func standardComputeDirectService(
+        unprotectedAPIKey: String,
+        baseURL: String? = nil
+    ) -> StandardComputeService {
+        return StandardComputeDirectService(
+            unprotectedAPIKey: unprotectedAPIKey,
+            baseURL: baseURL
+        )
+    }
+
     /// AIProxy's Brave service
     ///
     /// - Parameters:
