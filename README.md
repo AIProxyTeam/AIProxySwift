@@ -20,6 +20,7 @@ included:
 - DeepSeek
 - Fireworks AI
 - Runcrate
+- Standard Compute
 - Brave
 
 Your initialization code determines whether requests go straight to the provider or are
@@ -187,6 +188,7 @@ Once you're happy with your changes, open a PR here.
 * [DeepSeek](#deepseek)
 * [Fireworks AI](#fireworks-ai)
 * [Runcrate](#runcrate)
+* [Standard Compute](#standard-compute)
 * [Brave](#brave)
 * [gRPC](#grpc)
 * [Advanced Settings](#advanced-settings)
@@ -7336,6 +7338,95 @@ and response types. When you create a service in the AIProxy dashboard, use
         print("Received non-200 status code: \(statusCode) with response body: \(responseBody)")
     } catch {
         print("Could not create Runcrate embedding: \(error)")
+    }
+```
+
+***
+
+## Standard Compute
+
+[Standard Compute](https://standardcompute.com) is an OpenAI compatible API gateway at
+`https://api.stdcmpt.com/v1`, so the Standard Compute service reuses this library's OpenAI request
+and response types. The default model `StandardCompute` is routed: each request goes to the
+cheapest enabled model that can handle it, with automatic fallback. You can also pin a specific
+model by id; the public list is at https://api.stdcmpt.com/v1/models. When you create a service in
+the AIProxy dashboard, use `https://api.stdcmpt.com` as the proxy base URL.
+
+### How to make a chat completion request with Standard Compute
+
+```swift
+    import AIProxy
+
+    /* Uncomment for BYOK use cases */
+    // let standardComputeService = AIProxy.standardComputeDirectService(
+    //     unprotectedAPIKey: "your-standard-compute-key"
+    // )
+
+    /* Uncomment for all other production use cases */
+    // let standardComputeService = AIProxy.standardComputeService(
+    //     partialKey: "partial-key-from-your-developer-dashboard",
+    //     serviceURL: "service-url-from-your-developer-dashboard"
+    // )
+
+    let requestBody = OpenAIChatCompletionRequestBody(
+        model: "StandardCompute",
+        messages: [
+            .system(content: .text("You are a helpful assistant.")),
+            .user(content: .text("Hello!"))
+        ],
+        maxCompletionTokens: 300
+    )
+
+    do {
+        let response = try await standardComputeService.chatCompletionRequest(body: requestBody)
+        print(response.choices.first?.message.content ?? "")
+        if let usage = response.usage {
+            print("Used \(usage.totalTokens ?? 0) total tokens")
+        }
+    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+        print("Received non-200 status code: \(statusCode) with response body: \(responseBody)")
+    } catch {
+        print("Could not get Standard Compute chat completion: \(error)")
+    }
+```
+
+### How to make a streaming chat completion with Standard Compute
+
+```swift
+    import AIProxy
+
+    /* Uncomment for BYOK use cases */
+    // let standardComputeService = AIProxy.standardComputeDirectService(
+    //     unprotectedAPIKey: "your-standard-compute-key"
+    // )
+
+    /* Uncomment for all other production use cases */
+    // let standardComputeService = AIProxy.standardComputeService(
+    //     partialKey: "partial-key-from-your-developer-dashboard",
+    //     serviceURL: "service-url-from-your-developer-dashboard"
+    // )
+
+    // Pin a specific model by id instead of using the routed `StandardCompute` default
+    let requestBody = OpenAIChatCompletionRequestBody(
+        model: "deepseek/deepseek-v4-flash",
+        messages: [
+            .user(content: .text("Write a haiku about Swift."))
+        ],
+        maxCompletionTokens: 300
+    )
+
+    do {
+        let stream = try await standardComputeService.streamingChatCompletionRequest(body: requestBody)
+        for try await chunk in stream {
+            print(chunk.choices.first?.delta.content ?? "")
+            if let usage = chunk.usage {
+                print("Used \(usage.totalTokens ?? 0) total tokens")
+            }
+        }
+    } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
+        print("Received non-200 status code: \(statusCode) with response body: \(responseBody)")
+    } catch {
+        print("Could not make streaming Standard Compute request: \(error)")
     }
 ```
 
