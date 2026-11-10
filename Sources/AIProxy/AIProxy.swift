@@ -978,6 +978,53 @@ public enum AIProxy {
         )
     }
 
+    /// AIProxy's UberLLM service
+    ///
+    /// - Parameters:
+    ///   - partialKey: Your partial key is displayed in the AIProxy dashboard when you submit your UberLLM key.
+    ///     AIProxy takes your UberLLM key, encrypts it, and stores part of the result on our servers. The part that you include
+    ///     here is the other part. Both pieces are needed to decrypt your key and fulfill the request to UberLLM.
+    ///
+    ///   - serviceURL: The service URL is displayed in the AIProxy dashboard when you submit your UberLLM key.
+    ///
+    ///   - clientID: An optional clientID to attribute requests to specific users or devices. It is OK to leave this blank for
+    ///     most applications. You would set this if you already have an analytics system, and you'd like to annotate AIProxy
+    ///     requests with IDs that are known to other parts of your system.
+    ///
+    ///     If you do not supply your own clientID, the internals of this lib will generate UUIDs for you. The default UUIDs are
+    ///     persistent on macOS and can be accurately used to attribute all requests to the same device. The default UUIDs
+    ///     on iOS are pesistent until the end user chooses to rotate their vendor identification number.
+    ///
+    /// - Returns: An instance of UberLLMService configured and ready to make requests
+    nonisolated public static func uberllmService(
+        partialKey: String,
+        serviceURL: String,
+        clientID: String? = nil
+    ) -> UberLLMService {
+        return UberLLMProxiedService(
+            partialKey: partialKey,
+            serviceURL: serviceURL,
+            clientID: clientID
+        )
+    }
+
+    /// Service that makes request directly to UberLLM. No protections are built-in for this service.
+    /// Please only use this for BYOK use cases.
+    ///
+    /// - Parameters:
+    ///   - unprotectedAPIKey: Your UberLLM API key
+    ///   - baseURL: Optional base URL for the API requests. Defaults to https://api.uberllm.dev
+    /// - Returns: An instance of UberLLMService configured and ready to make requests
+    nonisolated public static func uberllmDirectService(
+        unprotectedAPIKey: String,
+        baseURL: String? = nil
+    ) -> UberLLMService {
+        return UberLLMDirectService(
+            unprotectedAPIKey: unprotectedAPIKey,
+            baseURL: baseURL
+        )
+    }
+
     /// AIProxy's Brave service
     ///
     /// - Parameters:
