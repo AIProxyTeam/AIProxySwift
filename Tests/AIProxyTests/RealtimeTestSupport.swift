@@ -10,6 +10,13 @@ nonisolated final class RealtimeTestSignal<Value: Sendable>: @unchecked Sendable
     private var waiter: CheckedContinuation<Value, Error>?
     private var deadline: DispatchWorkItem?
 
+    var hasSucceeded: Bool {
+        lock.withLock {
+            if case .success = result { return true }
+            return false
+        }
+    }
+
     func resolve(_ result: Result<Value, Error>) {
         let continuation = lock.withLock {
             guard self.result == nil else { return nil as CheckedContinuation<Value, Error>? }
@@ -56,10 +63,12 @@ nonisolated final class RealtimeLoopbackServer: @unchecked Sendable {
     enum Upgrade: Sendable {
         case accept
         case reject(Int)
+        case httpOK
     }
 
     let listening = RealtimeTestSignal<URL>()
     let upgraded = RealtimeTestSignal<Void>()
+    let requestReceived = RealtimeTestSignal<String>()
     let acceptedConnections = RealtimeTestSignal<Void>()
     let peerClosed = RealtimeTestSignal<Void>()
     let stoppedListening = RealtimeTestSignal<Void>()
@@ -75,11 +84,10 @@ nonisolated final class RealtimeLoopbackServer: @unchecked Sendable {
     private var isUpgraded = false
     private var sentClose = false
     private var stopped = false
-    private(set) var requestText: String?
 
-    init(upgrade: Upgrade = .accept) throws {
+    init(upgrade: Upgrade = .accept, parameters: NWParameters = .tcp) throws {
         self.upgrade = upgrade
-        listener = try NWListener(using: .tcp, on: .any)
+        listener = try NWListener(using: parameters, on: .any)
         listener.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
             switch state {
@@ -190,19 +198,21 @@ nonisolated final class RealtimeLoopbackServer: @unchecked Sendable {
     private func processHandshake() {
         guard let end = handshake.range(of: Data("\r\n\r\n".utf8)) else { return }
         let request = String(decoding: handshake[..<end.upperBound], as: UTF8.self)
-        requestText = request
-        guard let keyLine = request.components(separatedBy: "\r\n").first(where: {
-            $0.lowercased().hasPrefix("sec-websocket-key:")
-        }), let key = keyLine.split(separator: ":", maxSplits: 1).last else {
-            fail(RealtimeTestFailure.invalidHandshake)
-            return
-        }
+        requestReceived.succeed(request)
         let response: String
         switch upgrade {
         case .accept:
+            guard let keyLine = request.components(separatedBy: "\r\n").first(where: {
+                $0.lowercased().hasPrefix("sec-websocket-key:")
+            }), let key = keyLine.split(separator: ":", maxSplits: 1).last else {
+                fail(RealtimeTestFailure.invalidHandshake)
+                return
+            }
             let digest = Insecure.SHA1.hash(data: Data((key.trimmingCharacters(in: .whitespaces) + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8))
             response = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(Data(digest).base64EncodedString())\r\n\r\n"
             isUpgraded = true
+        case .httpOK:
+            response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
         case .reject(let status):
             let body = "{\"error\":\"fixture rejection \(status)\"}"
             response = "HTTP/1.1 \(status) Rejected\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nX-Fixture-Request-ID: reject-\(status)\r\nConnection: close\r\n\r\n\(body)"

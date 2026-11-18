@@ -35,6 +35,30 @@ struct OpenAIRealtimeRoutingTests {
         #expect(direct !== proxied)
     }
 
+    @Test(arguments: [true, false])
+    func urlSessionDelegateRequiresMatchingLeafPublicKey(_ match: Bool) async throws {
+        let (peer, key) = try RealtimeTLSFixture.server(upgrade: .httpOK)
+        defer { peer.stop() }
+        let port = try #require(try await peer.listening.value().port)
+        let url = try #require(URL(string: "https://127.0.0.1:\(port)/pin-check"))
+        let request = URLRequest(url: url, timeoutInterval: 5)
+        let delegate = AIProxyCertificatePinningDelegate(pinnedPublicKeys: match ? [key] : [])
+        let urlSession = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        defer { urlSession.invalidateAndCancel() }
+
+        do {
+            let (body, response) = try await urlSession.data(for: request)
+            #expect(match)
+            #expect((response as? HTTPURLResponse)?.statusCode == 200)
+            #expect(body == Data("ok".utf8))
+            #expect(try await peer.requestReceived.value().hasPrefix("GET /pin-check HTTP/1.1\r\n"))
+        } catch let error as URLError {
+            #expect(!match)
+            #expect([URLError.Code.cancelled, .secureConnectionFailed, .serverCertificateUntrusted].contains(error.code))
+            #expect(!peer.requestReceived.hasSucceeded)
+        }
+    }
+
     @Test(arguments: ["direct", "proxy"])
     func factoryUsesSelectedRequestAndURLSessionWithoutReplacingHeaders(_ route: String) async throws {
         // These requests test the service/factory boundary. The real proxy builder
