@@ -1,28 +1,11 @@
 import Foundation
+import Network
 import Testing
 @testable import AIProxy
 
 @AIProxyActor
 @Suite(.serialized)
 struct OpenAIRealtimeRoutingTests {
-    @Test
-    func directRealtimeRequestRetainsSecureRouteAndAuthorization() async throws {
-        let builder = AIProxyDirectRequestBuilder(
-            baseURL: "https://api.openai.com",
-            unprotectedAuthHeader: ("Authorization", "Bearer fixture-key")
-        )
-        let request = try await builder.plainGET(
-            path: "/v1/realtime?model=fixture-model",
-            secondsToWait: 60,
-            additionalHeaders: [:]
-        )
-        #expect(request.url?.absoluteString == "https://api.openai.com/v1/realtime?model=fixture-model")
-        #expect(request.httpMethod == "GET")
-        #expect(request.timeoutInterval == 60)
-        #expect(request.httpBody == nil)
-        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-key")
-    }
-
     @Test
     func directAndProxiedNetworkersRetainTheirConfiguredDelegates() {
         let direct = DirectServiceNetworker().urlSession
@@ -35,15 +18,200 @@ struct OpenAIRealtimeRoutingTests {
         #expect(direct !== proxied)
     }
 
+    @Test(arguments: ["http", "ws"], ["127.0.0.1", "[::1]"])
+    func directFactoryForwardsAuthorizationToCustomEndpoint(_ scheme: String, _ host: String) async throws {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: host == "[::1]" ? "::1" : "127.0.0.1", port: .any)
+        let server = try RealtimeLoopbackServer(parameters: parameters)
+        defer { server.stop() }
+        let port = try #require(try await server.listening.value().port)
+        let service = AIProxy.openAIDirectService(unprotectedAPIKey: "fixture", baseURL: "\(scheme)://\(host):\(port)/custom")
+        let session = try await start(service)
+        defer { session.disconnect() }
+        let request = try await server.requestReceived.value()
+        #expect(request.hasPrefix("GET /custom/v1/realtime?model=fixture HTTP/1.1\r\n"))
+        #expect(headerValues("Host", in: request) == ["\(host):\(port)"])
+        #expect(headerValues("Authorization", in: request) == ["Bearer fixture"])
+        _ = try await server.firstClientText.value()
+    }
+
+    @Test
+    func factoryPreservesOneMiBIncomingMessageLimit() async throws {
+        let peer = try RealtimeLoopbackServer()
+        defer { peer.stop() }
+        let port = try #require(try await peer.listening.value().port)
+        let service = AIProxy.openAIDirectService(unprotectedAPIKey: "fixture", baseURL: "ws://127.0.0.1:\(port)")
+        let session = try await start(service)
+        defer { session.disconnect() }
+        let recorder = RealtimeMessageRecorder(expectedCount: 1)
+        let reader = recorder.consume(session.receiver)
+        defer { reader.cancel() }
+        _ = try await peer.firstClientText.value()
+        let event = RealtimeTestFixtures.text
+        let limit = 1 << 20
+        let atLimit = event + String(repeating: " ", count: limit - event.utf8.count)
+        try await peer.sendText([atLimit])
+        let delivered = try await recorder.delivered.value()
+        #expect(delivered.map(RealtimeMessageRecorder.label) == ["text:Ready"])
+        try await peer.sendText([atLimit + " "])
+        do {
+            try await recorder.finished.value()
+            Issue.record("An oversized WebSocket message must fail the receiver")
+        } catch NWError.posix(let code) {
+            #expect(code == .EMSGSIZE)
+            #expect(recorder.messages.count == 1)
+        }
+    }
+
+    @Test(arguments: ["https", "wss"], [tls_protocol_version_t.TLSv12, .TLSv13])
+    func matchingProxyPinAllowsSecureUpgradeAndForwardsRoutingHeaders(
+        _ scheme: String, _ version: tls_protocol_version_t
+    ) async throws {
+        let (peer, key) = try RealtimeTLSFixture.server(onlyTLSVersion: version)
+        defer { peer.stop() }
+        let port = try #require(try await peer.listening.value().port)
+        let builder = RoutingRequestBuilder(url: URL(string: "\(scheme)://127.0.0.1:\(port)/tenant%2Fone/v1/realtime?model=fixture")!)
+        let networker = FixtureProxiedNetworker(keys: [key], trustFixture: true)
+        defer { networker.urlSession.invalidateAndCancel() }
+        let service = OpenAIService(requestFormat: .standard, requestBuilder: builder, serviceNetworker: networker)
+        let session = try await start(service)
+        defer { session.disconnect() }
+        #expect(builder.path == "/v1/realtime?model=fixture")
+        #expect(builder.timeout == 60)
+        let request = try await peer.requestReceived.value()
+        #expect(request.hasPrefix("GET /tenant%2Fone/v1/realtime?model=fixture HTTP/1.1\r\n"))
+        #expect(headerValues("Host", in: request) == ["127.0.0.1:\(port)"])
+        for (name, value) in RoutingRequestBuilder.proxyHeaders {
+            #expect(headerValues(name, in: request) == [value])
+        }
+        _ = try await peer.firstClientText.value()
+    }
+
+    @Test
+    func matchingProxyPinStillRequiresModernTLS() async throws {
+        // Offer only the TLS 1.1 wire version (RFC 4346). The key matches the configured pin.
+        let tls11 = try #require(tls_protocol_version_t(rawValue: 0x0302))
+        let (peer, key) = try RealtimeTLSFixture.server(onlyTLSVersion: tls11)
+        defer { peer.stop() }
+        let port = try #require(try await peer.listening.value().port)
+        let networker = FixtureProxiedNetworker(keys: [key], trustFixture: true)
+        defer { networker.urlSession.invalidateAndCancel() }
+        let service = OpenAIService(
+            requestFormat: .standard,
+            requestBuilder: RoutingRequestBuilder(url: URL(string: "https://127.0.0.1:\(port)")!),
+            serviceNetworker: networker
+        )
+        let session = try await start(service)
+        defer { session.disconnect() }
+        let recorder = RealtimeMessageRecorder(expectedCount: 0)
+        let reader = recorder.consume(session.receiver)
+        defer { reader.cancel() }
+        do {
+            try await recorder.finished.value()
+            Issue.record("A matching key must still require TLS 1.2 or later")
+        } catch NWError.tls {}
+    }
+
+    #if DEBUG && !targetEnvironment(simulator)
+    @Test
+    func realProxyRequestBuilderForwardsItsAuthenticationToThePeer() async throws {
+        let (peer, key) = try RealtimeTLSFixture.server()
+        defer { peer.stop() }
+        let port = try #require(try await peer.listening.value().port)
+        let builder = AIProxyProxiedRequestBuilder(
+            partialKey: "fixture",
+            serviceURL: "https://127.0.0.1:\(port)/tenant%2Fone",
+            clientID: "fixture-client",
+            deviceCheckTokenProvider: { _ in "fixture-token" }
+        )
+        let networker = FixtureProxiedNetworker(keys: [key], trustFixture: true)
+        defer { networker.urlSession.invalidateAndCancel() }
+        let service = OpenAIService(requestFormat: .standard, requestBuilder: builder, serviceNetworker: networker)
+        let session = try await start(service)
+        defer { session.disconnect() }
+        let request = try await peer.requestReceived.value()
+        #expect(request.hasPrefix("GET /tenant%2Fone/v1/realtime?model=fixture HTTP/1.1\r\n"))
+        #expect(headerValues("aiproxy-partial-key", in: request) == ["fixture"])
+        #expect(headerValues("aiproxy-client-id", in: request) == ["fixture-client"])
+        #expect(headerValues("aiproxy-devicecheck", in: request) == ["fixture-token"])
+        #expect(headerValues("aiproxy-metadata", in: request).first?.isEmpty == false)
+        _ = try await peer.firstClientText.value()
+    }
+    #endif
+
+    @Test(arguments: ["http://example.invalid", "ws://example.invalid", "ftp://127.0.0.1"])
+    func directRejectsRemoteCleartextAndUnsupportedSchemes(_ baseURL: String) async throws {
+        let service = AIProxy.openAIDirectService(unprotectedAPIKey: "fixture", baseURL: baseURL)
+        await #expect(throws: URLError(.unsupportedURL)) { _ = try await start(service) }
+    }
+
     @Test(arguments: [true, false])
-    func urlSessionDelegateRequiresMatchingLeafPublicKey(_ match: Bool) async throws {
+    func publicTrustPoliciesRejectUntrustedPeer(_ direct: Bool) async throws {
+        let (peer, _) = try RealtimeTLSFixture.server()
+        defer { peer.stop() }
+        let port = try #require(try await peer.listening.value().port)
+        let url = URL(string: "https://127.0.0.1:\(port)")!
+        let service: OpenAIService
+        if direct {
+            service = AIProxy.openAIDirectService(unprotectedAPIKey: "fixture", baseURL: url.absoluteString)
+        } else {
+            service = OpenAIService(
+                requestFormat: .standard,
+                requestBuilder: RoutingRequestBuilder(url: url),
+                serviceNetworker: ProxiedServiceNetworker()
+            )
+        }
+        try await expectTLSFailure(service, peer: peer)
+    }
+
+    @Test(arguments: [
+        ("127.0.0.1", false, true),          // Untrusted issuer, matching pin
+        ("127.0.0.1", true, false),          // Trusted certificate, wrong pin
+        ("unlisted.localhost", true, true),  // Trusted certificate and pin, wrong hostname
+    ])
+    func proxyRequiresTrustedHostnameAndPinnedKey(host: String, trusted: Bool, pinMatches: Bool) async throws {
+        let (peer, key) = try RealtimeTLSFixture.server()
+        defer { peer.stop() }
+        let port = try #require(try await peer.listening.value().port)
+        let networker = FixtureProxiedNetworker(keys: pinMatches ? [key] : [], trustFixture: trusted)
+        defer { networker.urlSession.invalidateAndCancel() }
+        let service = OpenAIService(
+            requestFormat: .standard,
+            requestBuilder: RoutingRequestBuilder(url: URL(string: "https://\(host):\(port)")!),
+            serviceNetworker: networker
+        )
+        try await expectTLSFailure(service, peer: peer)
+    }
+
+    private func expectTLSFailure(_ service: OpenAIService, peer: RealtimeLoopbackServer) async throws {
+        let session = try await start(service)
+        defer { session.disconnect() }
+        let recorder = RealtimeMessageRecorder(expectedCount: 0)
+        let reader = recorder.consume(session.receiver)
+        defer { reader.cancel() }
+        do {
+            try await recorder.finished.value()
+            Issue.record("The TLS handshake accepted an untrusted peer")
+        } catch NWError.tls {
+            #expect(!peer.requestReceived.hasSucceeded)
+        }
+    }
+
+    @Test(arguments: ["http", "ws", "ftp"])
+    func proxyRejectsSchemesWithoutTLS(_ scheme: String) async throws {
+        let builder = RoutingRequestBuilder(url: URL(string: "\(scheme)://127.0.0.1")!)
+        let service = OpenAIService(requestFormat: .standard, requestBuilder: builder, serviceNetworker: ProxiedServiceNetworker())
+        await #expect(throws: URLError(.unsupportedURL)) { _ = try await start(service) }
+    }
+
+    @Test(arguments: [true, false])
+    func urlSessionDelegateMakesTheSamePinDecision(_ match: Bool) async throws {
         let (peer, key) = try RealtimeTLSFixture.server(upgrade: .httpOK)
         defer { peer.stop() }
         let port = try #require(try await peer.listening.value().port)
         let url = try #require(URL(string: "https://127.0.0.1:\(port)/pin-check"))
         let request = URLRequest(url: url, timeoutInterval: 5)
-        let delegate = AIProxyCertificatePinningDelegate(pinnedPublicKeys: match ? [key] : [])
-        let urlSession = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        let urlSession = FixtureProxiedNetworker(keys: match ? [key] : []).urlSession
         defer { urlSession.invalidateAndCancel() }
 
         do {
@@ -59,96 +227,65 @@ struct OpenAIRealtimeRoutingTests {
         }
     }
 
-    @Test(arguments: ["direct", "proxy"])
-    func factoryUsesSelectedRequestAndURLSessionWithoutReplacingHeaders(_ route: String) async throws {
-        // These requests test the service/factory boundary. The real proxy builder
-        // requires DeviceCheck and is separately preserved by source comparison.
-        let server = try RealtimeLoopbackServer()
-        defer { server.stop() }
-        var components = try #require(URLComponents(url: try await server.listening.value(), resolvingAgainstBaseURL: false))
-        components.path = "/\(route)/v1/realtime"
-        components.queryItems = [.init(name: "model", value: "fixture-model")]
-        var request = URLRequest(url: try #require(components.url))
-        request.httpMethod = "GET"
-        request.timeoutInterval = 60
-        request.setValue("fixture-key", forHTTPHeaderField: route == "direct" ? "Authorization" : "X-AIProxy-Partial-Key")
-        request.setValue("fixture-client", forHTTPHeaderField: "X-Fixture-Client")
-        let builder = RealtimeCapturingRequestBuilder(request: request)
-        let selectedSession = URLSession(configuration: .ephemeral)
-        defer { selectedSession.invalidateAndCancel() }
-        let networker = RealtimeSelectedNetworker(selectedSession: selectedSession)
-        let service = OpenAIService(
-            requestFormat: .standard,
-            requestBuilder: builder,
-            serviceNetworker: networker
-        )
+    @Test
+    func rejectsRequestWithoutAHost() async throws {
+        let builder = RoutingRequestBuilder(url: URL(fileURLWithPath: "/fixture"))
+        let service = OpenAIService(requestFormat: .standard, requestBuilder: builder, serviceNetworker: DirectServiceNetworker())
+        await #expect(throws: URLError(.badURL)) { _ = try await start(service) }
+    }
+
+    private func start(_ service: OpenAIService) async throws -> OpenAIRealtimeSession {
         let originalLogLevel = AIProxyLogLevel.callerDesiredLogLevel
         defer { AIProxyLogLevel.callerDesiredLogLevel = originalLogLevel }
-        let session = try await service.realtimeSession(model: "fixture-model", configuration: .init(), logLevel: .warning)
-        defer { session.disconnect() }
-        #expect(builder.calls.count == 1)
-        #expect(builder.calls.first?.path == "/v1/realtime?model=fixture-model")
-        #expect(builder.calls.first?.secondsToWait == 60)
-        #expect(builder.calls.first?.additionalHeaders == [:])
-        #expect(builder.calls.first?.baseURLOverride == nil)
-        try await server.upgraded.value()
-        let tasks = RealtimeTestSignal<[URLSessionTask]>()
-        selectedSession.getAllTasks { tasks.succeed($0) }
-        let selectedTasks = try await tasks.value()
-        #expect(networker.selectionCount == 1)
-        #expect(selectedTasks.count == 1)
-        #expect(selectedTasks.first is URLSessionWebSocketTask)
-        let constructed = try #require(selectedTasks.first?.originalRequest)
-        #expect(constructed.url == request.url)
-        #expect(constructed.httpMethod == request.httpMethod)
-        #expect(constructed.timeoutInterval == request.timeoutInterval)
-        #expect(constructed.httpBody == request.httpBody)
-        // Foundation adds its required WebSocket handshake headers. Every supplied
-        // routing/authentication header must still retain its exact original value.
-        for (name, value) in request.allHTTPHeaderFields ?? [:] {
-            #expect(constructed.value(forHTTPHeaderField: name) == value)
+        return try await service.realtimeSession(model: "fixture", configuration: .init(), logLevel: .warning)
+    }
+
+    private func headerValues(_ name: String, in request: String) -> [String] {
+        request.components(separatedBy: "\r\n").compactMap { line in
+            let pair = line.split(separator: ":", maxSplits: 1)
+            guard pair.count == 2, pair[0].caseInsensitiveCompare(name) == .orderedSame else { return nil }
+            return pair[1].trimmingCharacters(in: .whitespaces)
         }
     }
 }
 
 @AIProxyActor
-private final class RealtimeCapturingRequestBuilder: AIProxyRequestBuilder {
-    struct Call {
-        let path: String
-        let secondsToWait: UInt
-        let additionalHeaders: [String: String]
-        let baseURLOverride: String?
-    }
-    let request: URLRequest
-    private(set) var calls: [Call] = []
+private final class FixtureProxiedNetworker: ProxiedService {
+    let urlSession: URLSession
 
-    init(request: URLRequest) { self.request = request }
-
-    func plainGET(path: String, secondsToWait: UInt, additionalHeaders: [String: String], baseURLOverride: String?) async throws -> URLRequest {
-        calls.append(.init(path: path, secondsToWait: secondsToWait, additionalHeaders: additionalHeaders, baseURLOverride: baseURLOverride))
-        return request
-    }
-
-    func jsonPOST(path: String, body: Encodable, secondsToWait: UInt, additionalHeaders: [String: String], baseURLOverride: String?) async throws -> URLRequest {
-        throw RealtimeTestFailure.invalidHandshake
-    }
-    func multipartPOST(path: String, body: MultipartFormEncodable, secondsToWait: UInt, additionalHeaders: [String: String], baseURLOverride: String?) async throws -> URLRequest {
-        throw RealtimeTestFailure.invalidHandshake
-    }
-    func plainDELETE(path: String, secondsToWait: UInt, additionalHeaders: [String: String], baseURLOverride: String?) async throws -> URLRequest {
-        throw RealtimeTestFailure.invalidHandshake
+    init(keys: [Data], trustFixture: Bool = false) {
+        let delegate = AIProxyCertificatePinningDelegate(
+            pinnedPublicKeys: keys,
+            configureRealtimeTrust: { RealtimeTLSFixture.configureTrust($0, trustFixture: trustFixture) }
+        )
+        urlSession = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
     }
 }
 
+/// Supplies deterministic proxy headers at the same request-builder boundary used by DeviceCheck.
 @AIProxyActor
-private final class RealtimeSelectedNetworker: ServiceMixin {
-    let selectedSession: URLSession
-    private(set) var selectionCount = 0
+final class RoutingRequestBuilder: AIProxyRequestBuilder {
+    static let proxyHeaders = ["aiproxy-partial-key": "fixture", "aiproxy-client-id": "fixture-client", "aiproxy-devicecheck": "fixture-token", "aiproxy-metadata": "fixture-metadata"]
 
-    init(selectedSession: URLSession) { self.selectedSession = selectedSession }
+    let url: URL
+    let requestTimeout: TimeInterval?
+    private(set) var path: String?
+    private(set) var timeout: UInt?
 
-    var urlSession: URLSession {
-        selectionCount += 1
-        return selectedSession
+    init(url: URL, requestTimeout: TimeInterval? = nil) {
+        self.url = url
+        self.requestTimeout = requestTimeout
     }
+
+    func plainGET(path: String, secondsToWait: UInt, additionalHeaders: [String: String], baseURLOverride: String?) async throws -> URLRequest {
+        self.path = path
+        timeout = secondsToWait
+        var request = URLRequest(url: url, timeoutInterval: requestTimeout ?? TimeInterval(secondsToWait))
+        request.allHTTPHeaderFields = Self.proxyHeaders
+        return request
+    }
+
+    func jsonPOST(path: String, body: Encodable, secondsToWait: UInt, additionalHeaders: [String: String], baseURLOverride: String?) async throws -> URLRequest { throw RealtimeTestFailure.invalidHandshake }
+    func multipartPOST(path: String, body: MultipartFormEncodable, secondsToWait: UInt, additionalHeaders: [String: String], baseURLOverride: String?) async throws -> URLRequest { throw RealtimeTestFailure.invalidHandshake }
+    func plainDELETE(path: String, secondsToWait: UInt, additionalHeaders: [String: String], baseURLOverride: String?) async throws -> URLRequest { throw RealtimeTestFailure.invalidHandshake }
 }

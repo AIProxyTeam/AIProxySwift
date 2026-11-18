@@ -9,6 +9,16 @@ import Testing
 /// (SAN 127.0.0.1, DNS localhost, validity January 2024). The DER values are public test data.
 /// SecIdentityCreate constructs an in-memory identity without installing anything in a keychain.
 enum RealtimeTLSFixture {
+    /// Configure only this handshake, using a fixed date inside the fixture’s validity period.
+    static func configureTrust(_ trust: SecTrust, trustFixture: Bool) -> OSStatus {
+        if trustFixture {
+            guard let certificate = try? certificate else { return errSecDecode }
+            let status = SecTrustSetAnchorCertificates(trust, [certificate] as CFArray)
+            guard status == errSecSuccess else { return status }
+        }
+        return SecTrustSetVerifyDate(trust, Date(timeIntervalSince1970: 1_705_276_800) as CFDate)
+    }
+
     private static var certificate: SecCertificate {
         get throws {
             try #require(SecCertificateCreateWithData(nil, Data(base64Encoded: certificateDER)! as CFData))
@@ -16,13 +26,18 @@ enum RealtimeTLSFixture {
     }
 
     static func server(
-        upgrade: RealtimeLoopbackServer.Upgrade = .accept
+        upgrade: RealtimeLoopbackServer.Upgrade = .accept,
+        onlyTLSVersion: tls_protocol_version_t? = nil
     ) throws -> (peer: RealtimeLoopbackServer, publicKey: Data) {
         let key = try P256.Signing.PrivateKey(derRepresentation: Data(base64Encoded: privateKeyDER)!)
         let attributes = [kSecAttrKeyClass: kSecAttrKeyClassPrivate, kSecAttrKeyType: kSecAttrKeyTypeECSECPrimeRandom]
         let privateKey = try #require(SecKeyCreateWithData(key.x963Representation as CFData, attributes as CFDictionary, nil))
         let identity = try #require(SecIdentityCreate(nil, certificate, privateKey))
         let tls = NWProtocolTLS.Options()
+        if let onlyTLSVersion {
+            sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, onlyTLSVersion)
+            sec_protocol_options_set_max_tls_protocol_version(tls.securityProtocolOptions, onlyTLSVersion)
+        }
         sec_protocol_options_set_local_identity(tls.securityProtocolOptions, try #require(sec_identity_create(identity)))
         let parameters = NWParameters(tls: tls)
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)

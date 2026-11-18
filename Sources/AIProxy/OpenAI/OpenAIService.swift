@@ -6,6 +6,27 @@
 //
 
 import Foundation
+import Network
+
+nonisolated private func configureRealtimePinning(
+    _ tls: NWProtocolTLS.Options,
+    delegate: AIProxyCertificatePinningDelegate
+) {
+    let queue = DispatchQueue(label: "com.aiproxy.realtime.tls")
+    sec_protocol_options_set_verify_block(tls.securityProtocolOptions, { _, peerTrust, complete in
+        let trust = sec_trust_copy_ref(peerTrust).takeRetainedValue()
+        if let configure = delegate.configureRealtimeTrust, configure(trust) != errSecSuccess {
+            complete(false)
+            return
+        }
+        // A custom Network.framework verifier replaces the default trust decision.
+        // Evaluate its existing TLS and hostname policies before accepting the SDK pin.
+        let status = SecTrustEvaluateAsyncWithError(trust, queue) { trust, trusted, _ in
+            complete(trusted && delegate.matchesPinnedPublicKey(trust))
+        }
+        if status != errSecSuccess { complete(false) }
+    }, queue)
+}
 
 /// OpenAI REST operations and Realtime sessions.
 ///
@@ -282,10 +303,70 @@ import Foundation
             secondsToWait: 60,
             additionalHeaders: [:]
         )
-        return OpenAIRealtimeSession(
-            webSocketTask: self.serviceNetworker.urlSession.webSocketTask(with: request),
-            sessionConfiguration: configuration
+        let session = OpenAIRealtimeSession(
+            connection: try makeRealtimeConnection(for: request),
+            sessionConfiguration: configuration,
+            setupTimeout: request.timeoutInterval
         )
+        session.start()
+        return session
+    }
+
+    private func makeRealtimeConnection(for request: URLRequest) throws -> NWConnection {
+        guard let url = request.url, var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let host = url.host, !host.isEmpty else {
+            throw URLError(.badURL)
+        }
+
+        let tls: NWProtocolTLS.Options?
+        let direct = serviceNetworker is DirectService
+        switch components.scheme?.lowercased() {
+        case "https", "wss":
+            components.scheme = "wss"
+            let options = NWProtocolTLS.Options()
+            let ats = Bundle.main.infoDictionary?["NSAppTransportSecurity"] as? [String: Any]
+            let minimum = OpenAIRealtimeTLS.minimumVersion(
+                for: host,
+                exceptionDomains: ats?["NSExceptionDomains"] as? [String: Any] ?? [:],
+                systemMinimum: sec_protocol_options_get_default_min_tls_protocol_version()
+            )
+            sec_protocol_options_set_min_tls_protocol_version(options.securityProtocolOptions, minimum)
+            sec_protocol_options_append_tls_ciphersuite_group(options.securityProtocolOptions, .ats)
+            if !direct {
+                // The proxied networker also applies the SDK's encrypted DNS preference.
+                guard let delegate = serviceNetworker.urlSession.delegate as? AIProxyCertificatePinningDelegate else {
+                    throw AIProxyError.assertion("Missing certificate pinning delegate for the proxied Realtime connection")
+                }
+                configureRealtimePinning(options, delegate: delegate)
+            }
+            tls = options
+        case "http", "ws":
+            // Network.framework does not enforce URLSession's App Transport Security policy.
+            guard direct, host == "127.0.0.1" || components.host == "[::1]" else { throw URLError(.unsupportedURL) }
+            components.scheme = "ws"
+            tls = nil
+        default:
+            throw URLError(.unsupportedURL)
+        }
+        guard let endpointURL = components.url else { throw URLError(.badURL) }
+
+        let webSocket = NWProtocolWebSocket.Options()
+        webSocket.autoReplyPing = true
+        webSocket.maximumMessageSize = 1 << 20 // Match URLSessionWebSocketTask's receive limit.
+        var headers = (request.allHTTPHeaderFields ?? [:]).filter { $0.key.caseInsensitiveCompare("Host") != .orderedSame }
+        // Network omits a nonstandard port from its generated Host header.
+        let headerHost = host.contains(":") ? components.percentEncodedHost ?? host : host
+        if let port = url.port, port != (tls == nil ? 80 : 443) {
+            headers["Host"] = "\(headerHost):\(port)"
+        } else {
+            headers["Host"] = headerHost
+        }
+        webSocket.setAdditionalHeaders(headers.map { ($0.key, $0.value) })
+
+        let parameters = NWParameters(tls: tls)
+        parameters.defaultProtocolStack.applicationProtocols.insert(webSocket, at: 0)
+        parameters.serviceClass = .interactiveVoice
+        return NWConnection(to: .url(endpointURL), using: parameters)
     }
 
     /// Uploads a file to OpenAI for use in a future tool call

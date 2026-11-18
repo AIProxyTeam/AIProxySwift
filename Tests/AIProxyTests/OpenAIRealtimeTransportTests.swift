@@ -315,6 +315,30 @@ struct OpenAIRealtimeTransportTests {
     }
 
     @Test
+    func directFactoryRepliesToPingAndContinuesReceivingTextAndAudio() async throws {
+        let server = try RealtimeLoopbackServer()
+        defer { server.stop() }
+        let port = try #require(try await server.listening.value().port)
+        let service = AIProxy.openAIDirectService(unprotectedAPIKey: "fixture", baseURL: "ws://127.0.0.1:\(port)")
+        let session = try await service.realtimeSession(
+            model: "fixture", configuration: .init(), logLevel: AIProxyLogLevel.callerDesiredLogLevel
+        )
+        defer { session.disconnect() }
+        let recorder = RealtimeMessageRecorder(expectedCount: 2)
+        let reader = recorder.consume(session.receiver)
+        defer { reader.cancel() }
+        _ = try await server.firstClientText.value()
+        let payload = Data([0, 255, 127])
+        try await server.sendFrame(opcode: 9, payload: payload)
+        #expect(try await server.clientPong.value() == payload)
+        try await server.sendFrame(opcode: 10, payload: payload)
+        try await server.sendText([RealtimeTestFixtures.text, RealtimeTestFixtures.audio])
+        #expect(try await recorder.delivered.value().map(RealtimeMessageRecorder.label) == ["text:Ready", "audio:AQID"])
+        session.disconnect()
+        try await recorder.finished.value()
+    }
+
+    @Test
     func nativeOrdinaryInitialUpdateAndAudioSendRetainPayloads() async throws {
         let server = try RealtimeLoopbackServer()
         defer { server.stop() }

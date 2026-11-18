@@ -95,40 +95,6 @@ nonisolated struct OpenAIRealtimeTransport: Sendable {
     let sessionConfiguration: OpenAIRealtimeSessionConfiguration
 
     convenience init(
-        webSocketTask: URLSessionWebSocketTask,
-        sessionConfiguration: OpenAIRealtimeSessionConfiguration
-    ) {
-        let transport = OpenAIRealtimeTransport(
-            send: { data, completion in
-                webSocketTask.send(.string(String(decoding: data, as: UTF8.self)), completionHandler: completion)
-            },
-            receive: { completion in
-                webSocketTask.receive { @Sendable result in
-                    switch result {
-                    case .success(.string(let text)):
-                        completion(.success(.message(Data(text.utf8))))
-                    case .success(.data(let data)):
-                        completion(.success(.message(data)))
-                    case .failure(let error):
-                        let code = webSocketTask.closeCode
-                        if code == .invalid { completion(.failure(error)) }
-                        else { completion(.success(.closed(code: code.rawValue, reason: webSocketTask.closeReason, error: error))) }
-                    @unknown default:
-                        completion(.failure(AIProxyError.assertion("Received an unsupported WebSocket message format")))
-                    }
-                }
-            },
-            state: { .setup },
-            start: { _ in webSocketTask.resume() },
-            cancel: { webSocketTask.cancel() }
-        )
-        self.init(transport: transport, sessionConfiguration: sessionConfiguration)
-        self.start()
-        // Foundation applies its request timeout and reports failures through the task.
-        self.cancelSetupDeadline()
-    }
-
-    convenience init(
         connection: NWConnection,
         sessionConfiguration: OpenAIRealtimeSessionConfiguration,
         setupTimeout: TimeInterval = 60

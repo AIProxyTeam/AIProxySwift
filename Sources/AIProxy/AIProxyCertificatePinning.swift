@@ -53,13 +53,17 @@ nonisolated public final class AIProxyCertificatePinningDelegate: NSObject, URLS
 
     private let pinnedPublicKeys: [Data]
 
+    let configureRealtimeTrust: (@Sendable (SecTrust) -> OSStatus)?
+
     public override init() {
         self.pinnedPublicKeys = publicKeysAsData
+        self.configureRealtimeTrust = nil
         super.init()
     }
 
-    init(pinnedPublicKeys: [Data]) {
+    init(pinnedPublicKeys: [Data], configureRealtimeTrust: (@Sendable (SecTrust) -> OSStatus)? = nil) {
         self.pinnedPublicKeys = pinnedPublicKeys
+        self.configureRealtimeTrust = configureRealtimeTrust
         super.init()
     }
 
@@ -183,7 +187,7 @@ nonisolated public final class AIProxyCertificatePinningDelegate: NSObject, URLS
       return (.useCredential, URLCredential(trust: secTrust))
    }
 
-    /// Compares the server's leaf public key with the configured pins.
+    /// Both Foundation challenges and native TLS connections use the same leaf public-key pins.
     func matchesPinnedPublicKey(_ trust: SecTrust) -> Bool {
         guard let certificate = getServerCert(secTrust: trust),
               let key = SecCertificateCopyKey(certificate),
