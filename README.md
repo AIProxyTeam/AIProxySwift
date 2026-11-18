@@ -1315,10 +1315,34 @@ Cancelling while awaiting the next event closes the session. Put
 cancellation interrupts event handling or the task returns early.
 The SDK leaves retries and reconnection to the caller.
 
-An abnormal close throws `OpenAIRealtimeSessionError.closed`, retaining the close
-code, raw reason, and original underlying error. Other transport, serialization,
-and decoding errors are forwarded unchanged. WebSocket handshake failures retain
-Foundation's error; their HTTP response body is unavailable through this API.
+OpenAI Realtime uses Network.framework WebSockets for connection state, close frames,
+and automatic pong replies. `realtimeSession` returns after starting the connection.
+Its `receiver` reports handshake failures and the 60-second connection setup timeout.
+Wait for `.sessionUpdated` to confirm the provider accepted the initial configuration.
+
+On Apple Watch, WebSockets require an eligible use case, such as an audio streaming
+app actively streaming audio or a VoIP app in a CallKit call. Test on a physical
+watch because the simulator always permits low-level networking. [Apple’s watchOS networking guidance](https://developer.apple.com/documentation/technotes/tn3135-low-level-networking-on-watchos).
+
+For custom endpoints, use the final WebSocket address. The upgrade uses the SDK’s
+request headers. It does not follow HTTP redirects or share the REST session’s
+cookies. Use an `https` or `wss` service URL supporting
+TLS 1.2 or later and the ATS cipher suite group. Realtime negotiates TLS 1.3
+with compatible servers. Setting `NSExceptionMinimumTLSVersion` to `TLSv1.3` for
+a matching destination in the app’s `NSExceptionDomains` requires TLS 1.3 on
+both direct and proxied connections.
+
+Both routes require system TLS trust. Proxied connections also require the
+server’s leaf public key to match one of the SDK’s pins. For local testing,
+direct connections also accept `http` and `ws` on `127.0.0.1` and `::1`.
+Network.framework operates outside App Transport Security (ATS). Apps that require
+additional ATS restrictions, such as domain-specific certificate pins, must account
+for that when adopting native Realtime. [Apple’s ATS guidance](https://developer.apple.com/documentation/security/preventing-insecure-network-connections).
+
+An abnormal close throws `OpenAIRealtimeSessionError.closed` with the close code,
+raw reason, and any underlying transport error. Other transport, serialization,
+and decoding failures retain their original errors. A failed handshake can surface
+an `NWError`. The receiver does not expose the HTTP upgrade response body.
 
 Take these steps to build and run an OpenAI realtime example: 
 
@@ -1506,9 +1530,9 @@ final class RealtimeManager {
 ```swift
 let configuration = OpenAIRealtimeSessionConfiguration(
     outputModalities: [.audio],
-    voice: .builtin("alloy"),
     tools: [.webSearch(.init(searchContextSize: .medium))],
-    toolChoice: .auto
+    toolChoice: .auto,
+    voice: .builtin("alloy")
 )
 
 let session = try await openAIService.realtimeSession(
@@ -7575,7 +7599,7 @@ In such a case, you can pop UI to the end user by catching AIProxyError.deviceCh
 
 ### How to catch Foundation errors for specific conditions
 
-We use Foundation's `URL` types such as `URLRequest` and `URLSession` for all connections to
+The SDK uses Foundation's `URLRequest` and `URLSession` for HTTP connections to
 AIProxy. You can view the various errors that Foundation may raise by viewing NSURLError.h
 (which is easiest to find by punching `cmd-shift-o` in Xcode and searching for it).
 
