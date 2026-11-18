@@ -30,6 +30,45 @@ struct OpenAIRealtimeTransportTests {
         try await command.value
     }
 
+    @Test(arguments: [false, true])
+    func endingSetupReleasesPendingCommand(_ expire: Bool) async throws {
+        let server = try RealtimeLoopbackServer(upgrade: .deferred)
+        defer { server.stop() }
+        let client = makeNativeRealtimeClient(url: try await server.listening.value())
+        defer { client.session.disconnect() }
+        _ = try await server.requestReceived.value()
+        let recorder = RealtimeMessageRecorder(expectedCount: 0)
+        let reader = recorder.consume(client.session.receiver)
+        defer { reader.cancel() }
+        let encoded = RealtimeTestSignal<Void>()
+        let sent = RealtimeTestSignal<Void>()
+        let command = Task { @AIProxyActor in
+            do {
+                try await client.session.sendMessage(ImmediateCommand(encoded: encoded))
+                sent.succeed(())
+            } catch {
+                sent.fail(error)
+            }
+        }
+        defer { command.cancel() }
+        try await encoded.value()
+        if expire { client.session.setupDeadlineReached() }
+        else { client.session.disconnect() }
+        do {
+            try await sent.value()
+            Issue.record("A command queued during setup must fail on teardown")
+        } catch is NWError {}
+        if expire {
+            do {
+                try await recorder.finished.value()
+                Issue.record("The receiver must retain the setup deadline failure")
+            } catch let error as URLError { #expect(error.code == .timedOut) }
+        } else {
+            try await recorder.finished.value()
+        }
+        try await server.peerClosed.value()
+    }
+
     @Test
     func binaryJSONEventArrivesAndSubsequentTextIsDelivered() async throws {
         let server = try RealtimeLoopbackServer()

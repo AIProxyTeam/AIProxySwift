@@ -85,7 +85,8 @@ nonisolated struct OpenAIRealtimeTransport: Sendable {
 
 @AIProxyActor open class OpenAIRealtimeSession {
     private let transport: OpenAIRealtimeTransport
-    private var hasConnected = false
+    private let setupTimeout: TimeInterval
+    private var setupDeadline: Task<Void, Never>?
     private var isTerminated = false
     private var hasStarted = false
     private var isReceiving = false
@@ -123,27 +124,33 @@ nonisolated struct OpenAIRealtimeTransport: Sendable {
         )
         self.init(transport: transport, sessionConfiguration: sessionConfiguration)
         self.start()
+        // Foundation applies its request timeout and reports failures through the task.
+        self.cancelSetupDeadline()
     }
 
     convenience init(
         connection: NWConnection,
-        sessionConfiguration: OpenAIRealtimeSessionConfiguration
+        sessionConfiguration: OpenAIRealtimeSessionConfiguration,
+        setupTimeout: TimeInterval = 60
     ) {
-        self.init(transport: .network(connection), sessionConfiguration: sessionConfiguration)
+        self.init(transport: .network(connection), sessionConfiguration: sessionConfiguration, setupTimeout: setupTimeout)
     }
 
     init(
         transport: OpenAIRealtimeTransport,
-        sessionConfiguration: OpenAIRealtimeSessionConfiguration
+        sessionConfiguration: OpenAIRealtimeSessionConfiguration,
+        setupTimeout: TimeInterval = 60
     ) {
         let (receiver, continuation) = AsyncThrowingStream<OpenAIRealtimeMessage, Error>.makeStream()
         self.transport = transport
+        self.setupTimeout = setupTimeout
         self.receiverStream = receiver
         self.continuation = continuation
         self.sessionConfiguration = sessionConfiguration
     }
 
     deinit {
+        setupDeadline?.cancel()
         continuation.finish()
         if !isTerminated {
             let cancel = transport.cancel
@@ -196,6 +203,13 @@ nonisolated struct OpenAIRealtimeTransport: Sendable {
                 Task { @AIProxyActor [weak self] in self?.disconnect() }
             }
         }
+        let timeout = setupTimeout.isFinite ? max(0, setupTimeout) : 60
+        let capped = min(timeout, TimeInterval(UInt64.max / 1_000_000_000))
+        self.setupDeadline = Task { @AIProxyActor [weak self] in
+            do { try await Task.sleep(nanoseconds: UInt64(capped * 1_000_000_000)) }
+            catch { return }
+            self?.setupDeadlineReached()
+        }
         self.transport.start { [weak self] state in
             Task { @AIProxyActor [weak self] in self?.handleConnectionState(state) }
         }
@@ -224,12 +238,12 @@ nonisolated struct OpenAIRealtimeTransport: Sendable {
         guard !isTerminated else { return }
         switch state {
         case .ready:
-            hasConnected = true
+            self.cancelSetupDeadline()
         case .failed(let error):
             // An established connection can report ENOTCONN before its buffered
             // messages and close frame have been received. Let the outstanding
             // receive drain them and deliver either the close or its socket error.
-            if !hasConnected { self.fail(error, category: "connection") }
+            if setupDeadline != nil { self.fail(error, category: "connection") }
         case .waiting(let error):
             // Network can retry transient path failures. TLS failures, rejected
             // upgrades and refused endpoints should surface their original cause.
@@ -244,6 +258,16 @@ nonisolated struct OpenAIRealtimeTransport: Sendable {
         default:
             break
         }
+    }
+
+    func setupDeadlineReached() {
+        guard setupDeadline != nil, !isTerminated else { return }
+        self.fail(URLError(.timedOut), category: "connection")
+    }
+
+    private func cancelSetupDeadline() {
+        setupDeadline?.cancel()
+        setupDeadline = nil
     }
 
     private func receiveMessage() {
@@ -302,6 +326,7 @@ nonisolated struct OpenAIRealtimeTransport: Sendable {
     private func terminate(throwing error: Error? = nil) {
         guard !isTerminated else { return }
         self.isTerminated = true
+        self.cancelSetupDeadline()
         self.continuation.finish(throwing: error)
         self.transport.cancel()
     }
