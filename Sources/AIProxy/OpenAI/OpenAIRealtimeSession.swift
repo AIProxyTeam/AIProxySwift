@@ -5,23 +5,89 @@
 //  Created by Lou Zell on 11/28/24.
 //
 
-import AVFoundation
 import Foundation
+import Network
 
-/// The operations needed by a Realtime session, backed by a WebSocket task in production.
+/// Native operations shared by the session and its deterministic lifecycle tests.
 nonisolated struct OpenAIRealtimeTransport: Sendable {
-    let send: @AIProxyActor @Sendable (URLSessionWebSocketTask.Message) async throws -> Void
-    let receive: @AIProxyActor @Sendable (@escaping @Sendable (Result<URLSessionWebSocketTask.Message, Error>) -> Void) -> Void
-    let resume: @AIProxyActor @Sendable () -> Void
+    enum Frame: Sendable {
+        case message(Data)
+        case receiveAgain
+        case closed(code: Int, reason: Data?, error: Error?)
+    }
+
+    typealias SendCompletion = @Sendable (Error?) -> Void
+    typealias ReceiveCompletion = @Sendable (Result<Frame, Error>) -> Void
+    let send: @AIProxyActor @Sendable (Data, @escaping SendCompletion) -> Void
+    let receive: @AIProxyActor @Sendable (@escaping ReceiveCompletion) -> Void
+    let state: @AIProxyActor @Sendable () -> NWConnection.State
+    let start: @AIProxyActor @Sendable (@escaping @Sendable (NWConnection.State) -> Void) -> Void
     let cancel: @AIProxyActor @Sendable () -> Void
-    let closeCode: @AIProxyActor @Sendable () -> URLSessionWebSocketTask.CloseCode
-    let closeReason: @AIProxyActor @Sendable () -> Data?
+
+    static func network(_ connection: NWConnection) -> Self {
+        Self(
+            send: { data, completion in
+                let metadata = NWProtocolWebSocket.Metadata(opcode: .text)
+                let context = NWConnection.ContentContext(identifier: "websocket", metadata: [metadata])
+                connection.send(content: data, contentContext: context, isComplete: true,
+                                completion: .contentProcessed { error in completion(error) })
+            },
+            receive: { completion in
+                connection.receiveMessage(completion: receiveHandler(completion))
+            },
+            state: { connection.state },
+            start: { stateChanged in
+                connection.stateUpdateHandler = stateChanged
+                connection.start(queue: DispatchQueue(label: "com.aiproxy.realtime", qos: .userInitiated))
+            },
+            cancel: {
+                connection.stateUpdateHandler = nil
+                connection.cancel()
+            }
+        )
+    }
+
+    /// Network invokes this callback on its queue, outside AIProxyActor.
+    private static func receiveHandler(_ completion: @escaping ReceiveCompletion)
+        -> @Sendable (Data?, NWConnection.ContentContext?, Bool, NWError?) -> Void {
+        { content, context, isComplete, error in
+            let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
+                as? NWProtocolWebSocket.Metadata
+            if let metadata, metadata.opcode == .close {
+                let code: Int
+                switch metadata.closeCode {
+                case .protocolCode(let value): code = Int(value.rawValue)
+                case .applicationCode(let value), .privateCode(let value): code = Int(value)
+                @unknown default:
+                    completion(.failure(error ?? AIProxyError.assertion("Unsupported WebSocket close metadata")))
+                    return
+                }
+                // Network supplies the reason as content, excluding the two status bytes.
+                completion(.success(.closed(code: code, reason: content, error: error)))
+            } else if let error, !isComplete || (metadata == nil && content == nil) {
+                // A socket error can accompany each complete buffered frame,
+                // including valid events preceding a close. Consume those first.
+                completion(.failure(error))
+            } else if metadata?.opcode == .ping || metadata?.opcode == .pong {
+                completion(.success(.receiveAgain))
+            } else if metadata == nil && content == nil {
+                // Network can signal EOF before reporting the actual socket error
+                // on the next receive. This is distinct from an empty WebSocket frame.
+                completion(.success(.receiveAgain))
+            } else {
+                // JSON can arrive as either text or binary. An empty message must
+                // reach the decoder as well so callers see its original failure.
+                completion(.success(.message(content ?? Data())))
+            }
+        }
+    }
 }
 
 @AIProxyActor open class OpenAIRealtimeSession {
-    private let webSocketTask: URLSessionWebSocketTask?
     private let transport: OpenAIRealtimeTransport
+    private var hasConnected = false
     private var isTerminated = false
+    private var hasStarted = false
     private var isReceiving = false
     private let receiverStream: AsyncThrowingStream<OpenAIRealtimeMessage, Error>
     private let continuation: AsyncThrowingStream<OpenAIRealtimeMessage, Error>.Continuation
@@ -31,43 +97,57 @@ nonisolated struct OpenAIRealtimeTransport: Sendable {
         webSocketTask: URLSessionWebSocketTask,
         sessionConfiguration: OpenAIRealtimeSessionConfiguration
     ) {
-        self.init(
-            transport: OpenAIRealtimeTransport(
-                send: { try await webSocketTask.send($0) },
-                receive: { webSocketTask.receive(completionHandler: $0) },
-                resume: { webSocketTask.resume() },
-                cancel: { webSocketTask.cancel() },
-                closeCode: { webSocketTask.closeCode },
-                closeReason: { webSocketTask.closeReason }
-            ),
-            webSocketTask: webSocketTask,
-            sessionConfiguration: sessionConfiguration
+        let transport = OpenAIRealtimeTransport(
+            send: { data, completion in
+                webSocketTask.send(.string(String(decoding: data, as: UTF8.self)), completionHandler: completion)
+            },
+            receive: { completion in
+                webSocketTask.receive { @Sendable result in
+                    switch result {
+                    case .success(.string(let text)):
+                        completion(.success(.message(Data(text.utf8))))
+                    case .success(.data(let data)):
+                        completion(.success(.message(data)))
+                    case .failure(let error):
+                        let code = webSocketTask.closeCode
+                        if code == .invalid { completion(.failure(error)) }
+                        else { completion(.success(.closed(code: code.rawValue, reason: webSocketTask.closeReason, error: error))) }
+                    @unknown default:
+                        completion(.failure(AIProxyError.assertion("Received an unsupported WebSocket message format")))
+                    }
+                }
+            },
+            state: { .setup },
+            start: { _ in webSocketTask.resume() },
+            cancel: { webSocketTask.cancel() }
         )
+        self.init(transport: transport, sessionConfiguration: sessionConfiguration)
+        self.start()
+    }
+
+    convenience init(
+        connection: NWConnection,
+        sessionConfiguration: OpenAIRealtimeSessionConfiguration
+    ) {
+        self.init(transport: .network(connection), sessionConfiguration: sessionConfiguration)
     }
 
     init(
         transport: OpenAIRealtimeTransport,
-        webSocketTask: URLSessionWebSocketTask? = nil,
         sessionConfiguration: OpenAIRealtimeSessionConfiguration
     ) {
         let (receiver, continuation) = AsyncThrowingStream<OpenAIRealtimeMessage, Error>.makeStream()
-        self.webSocketTask = webSocketTask
         self.transport = transport
         self.receiverStream = receiver
         self.continuation = continuation
         self.sessionConfiguration = sessionConfiguration
-        self.start()
     }
 
     deinit {
         continuation.finish()
         if !isTerminated {
-            if let webSocketTask {
-                webSocketTask.cancel()
-            } else {
-                let transport = self.transport
-                Task { @AIProxyActor in transport.cancel() }
-            }
+            let cancel = transport.cancel
+            Task { @AIProxyActor in cancel() }
         }
         logIf(.debug)?.debug("OpenAIRealtimeSession is being freed")
     }
@@ -91,8 +171,11 @@ nonisolated struct OpenAIRealtimeTransport: Sendable {
             throw OpenAIRealtimeSessionError.disconnected
         }
         do {
-            let message = URLSessionWebSocketTask.Message.string(try encodable.serialize())
-            try await self.transport.send(message)
+            let data: Data = try encodable.serialize()
+            let error = await withCheckedContinuation { continuation in
+                self.transport.send(data) { continuation.resume(returning: $0) }
+            }
+            if let error { throw error }
         } catch {
             let code = (error as NSError).code
             logIf(.error)?.error("Realtime send failed (code: \(code, privacy: .public)): \(error.localizedDescription, privacy: .private)")
@@ -105,26 +188,31 @@ nonisolated struct OpenAIRealtimeTransport: Sendable {
         self.terminate()
     }
 
-    private func start() {
+    func start() {
+        guard !hasStarted, !isTerminated else { return }
+        hasStarted = true
         self.continuation.onTermination = { [weak self] termination in
             if case .cancelled = termination {
                 Task { @AIProxyActor [weak self] in self?.disconnect() }
             }
         }
-        self.transport.resume()
+        self.transport.start { [weak self] state in
+            Task { @AIProxyActor [weak self] in self?.handleConnectionState(state) }
+        }
+
+        // Network queues operations during setup. Arm the receiver first and
+        // submit configuration before returning to callers that can send commands.
         self.receiveMessage()
         do {
-            let message = URLSessionWebSocketTask.Message.string(
-                try OpenAIRealtimeSessionUpdate(session: self.sessionConfiguration).serialize()
-            )
-            // Capture the transport, not the session, across a potentially pending send.
-            let send = self.transport.send
-            Task { @AIProxyActor [weak self] in
-                guard self != nil, self?.isTerminated == false else { return }
-                do {
-                    try await send(message)
-                } catch {
-                    self?.fail(error, category: "initial send")
+            let update = OpenAIRealtimeSessionUpdate(session: self.sessionConfiguration)
+            self.transport.send(try update.serialize()) { [weak self] error in
+                guard let error else { return }
+                Task { @AIProxyActor [weak self] in
+                    guard let self else { return }
+                    // Setup failure is handled by the state callback. After setup,
+                    // the receiver drains any buffered events and the peer's close.
+                    if case .failed = self.transport.state() { return }
+                    self.fail(error, category: "initial send")
                 }
             }
         } catch {
@@ -132,44 +220,56 @@ nonisolated struct OpenAIRealtimeTransport: Sendable {
         }
     }
 
+    func handleConnectionState(_ state: NWConnection.State) {
+        guard !isTerminated else { return }
+        switch state {
+        case .ready:
+            hasConnected = true
+        case .failed(let error):
+            // An established connection can report ENOTCONN before its buffered
+            // messages and close frame have been received. Let the outstanding
+            // receive drain them and deliver either the close or its socket error.
+            if !hasConnected { self.fail(error, category: "connection") }
+        case .waiting(let error):
+            // Network can retry transient path failures. TLS failures, rejected
+            // upgrades and refused endpoints should surface their original cause.
+            switch error {
+            case .posix(.ECONNABORTED), .posix(.ECONNREFUSED), .tls:
+                self.fail(error, category: "connection")
+            default:
+                break
+            }
+        case .cancelled:
+            self.terminate()
+        default:
+            break
+        }
+    }
+
     private func receiveMessage() {
         guard !isTerminated, !isReceiving else { return }
         self.isReceiving = true
-        let receive: @Sendable (Result<URLSessionWebSocketTask.Message, Error>) -> Void = { [weak self] result in
+        self.transport.receive { [weak self] result in
             Task { @AIProxyActor [weak self] in self?.didReceive(result) }
         }
-        self.transport.receive(receive)
     }
 
-    private func didReceive(_ result: Result<URLSessionWebSocketTask.Message, Error>) {
+    private func didReceive(_ result: Result<OpenAIRealtimeTransport.Frame, Error>) {
         guard !isTerminated else { return }
         self.isReceiving = false
         switch result {
         case .failure(let error):
-            // A normal frame, an abnormal frame, and a dropped socket can all produce
-            // the same NSError. Only supplied close metadata confirms a remote close.
-            switch self.transport.closeCode() {
-            case .normalClosure:
+            self.fail(error, category: "receive")
+        case .success(.receiveAgain):
+            self.receiveMessage()
+        case .success(.closed(let code, let reason, let error)):
+            if code == 1000 {
                 self.terminate()
-            case .invalid:
-                self.fail(error, category: "receive")
-            default:
-                let closed = OpenAIRealtimeSessionError.closed(
-                    code: self.transport.closeCode().rawValue,
-                    reason: self.transport.closeReason(),
-                    underlyingError: error
-                )
-                self.fail(closed, category: "receive", code: self.transport.closeCode().rawValue)
+            } else {
+                let close = OpenAIRealtimeSessionError.closed(code: code, reason: reason, underlyingError: error)
+                self.fail(close, category: "receive", code: code)
             }
-        case .success(let message):
-            let data: Data
-            switch message {
-            case .string(let text): data = Data(text.utf8)
-            case .data(let bytes): data = bytes
-            @unknown default:
-                self.fail(AIProxyError.assertion("Received an unsupported WebSocket message format"), category: "receive")
-                return
-            }
+        case .success(.message(let data)):
             do {
                 let event = try JSONDecoder().decode(OpenAIRealtimeMessage.self, from: data)
                 if case .error(let providerError) = event {

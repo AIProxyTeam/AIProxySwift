@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Testing
 @testable import AIProxy
 #if os(macOS)
@@ -16,7 +17,7 @@ struct OpenAIRealtimeSessionFailureTests {
         let session = fixture.makeSession()
         defer { session.disconnect() }
         try await fixture.waitForSend(1)
-        fixture.deliver(.success(.string("{\"type\":\"error\",\"error\":{\"message\":\"\(marker)\"}}")))
+        fixture.deliverMessage("{\"type\":\"error\",\"error\":{\"message\":\"\(marker)\"}}")
         try await fixture.waitForReceive(2)
         fixture.sendFailures[2] = NSError(domain: "RealtimeTests.LogSend", code: 873451)
         do {
@@ -59,7 +60,7 @@ struct OpenAIRealtimeSessionFailureTests {
         let marker = "private-message-\(UUID().uuidString)"
         let padding = String(repeating: "x", count: 12_345)
         let bytes = Data("{\"type\":\"response.output_text.delta\",\"delta\":123,\"private\":\"\(marker)\",\"padding\":\"\(padding)\"}".utf8)
-        fixture.deliver(.success(.data(bytes)))
+        fixture.deliver(.success(.message(bytes)))
         try await fixture.cancelled.value()
 
         let expected = "Realtime decode failed (bytes: \(bytes.count), type: "
@@ -88,13 +89,13 @@ struct OpenAIRealtimeSessionFailureTests {
         let session = fixture.makeSession()
         defer { session.disconnect() }
         for (index, event) in [RealtimeTestFixtures.structuredError, RealtimeTestFixtures.secondError].enumerated() {
-            fixture.deliver(.success(.string(event)))
+            fixture.deliverMessage(event)
             try await fixture.waitForReceive(index + 2)
         }
         let recorder = RealtimeMessageRecorder(expectedCount: 3)
         let reader = recorder.consume(session.receiver)
         defer { reader.cancel() }
-        fixture.deliver(.success(.string(RealtimeTestFixtures.text)))
+        fixture.deliverMessage(RealtimeTestFixtures.text)
         let messages = try await recorder.delivered.value()
         #expect(messages.map(RealtimeMessageRecorder.label) == ["error:server_error_1", "error:server_error_2", "text:Ready"])
     }
@@ -104,7 +105,7 @@ struct OpenAIRealtimeSessionFailureTests {
         let fixture = RealtimeScriptedTransport()
         var session: OpenAIRealtimeSession? = fixture.makeSession()
         weak var weakSession = session
-        fixture.deliver(.success(.string(RealtimeTestFixtures.structuredError)))
+        fixture.deliverMessage(RealtimeTestFixtures.structuredError)
         try await fixture.waitForReceive(2)
         session = nil
         try await fixture.cancelled.value()
@@ -117,7 +118,7 @@ struct OpenAIRealtimeSessionFailureTests {
         let fixture = RealtimeScriptedTransport()
         let session = fixture.makeSession()
         defer { session.disconnect() }
-        fixture.deliver(.success(.string(RealtimeTestFixtures.structuredError)))
+        fixture.deliverMessage(RealtimeTestFixtures.structuredError)
         try await fixture.waitForReceive(2)
         let expected = originalFailure(useNSError: true, domain: "RealtimeTests.EarlyAfterProviderError", code: 49)
         fixture.deliver(.failure(expected))
@@ -136,10 +137,66 @@ struct OpenAIRealtimeSessionFailureTests {
     }
 
     @Test
+    func earlyProviderErrorPrecedesPendingInitialSendFailure() async throws {
+        let fixture = RealtimeScriptedTransport()
+        fixture.holdInitialSend = true
+        let session = fixture.makeSession()
+        defer { session.disconnect() }
+        try await fixture.waitForSend(1)
+        fixture.deliverMessage(RealtimeTestFixtures.structuredError)
+        try await fixture.waitForReceive(2)
+
+        let expected = NSError(domain: "RealtimeTests.PendingInitialSend", code: 51)
+        fixture.failInitialSend(expected)
+        try await fixture.cancelled.value()
+        let recorder = RealtimeMessageRecorder(expectedCount: 1)
+        let reader = recorder.consume(session.receiver)
+        defer { reader.cancel() }
+        do {
+            try await recorder.finished.value()
+            Issue.record("Expected the original initial send failure")
+        } catch {
+            expectOriginalFailure(error, expected)
+        }
+        #expect(recorder.messages.map(RealtimeMessageRecorder.label) == ["error:server_error_1"])
+        #expect(fixture.cancelCount == 1)
+    }
+
+    @Test
+    func failedConnectionDrainsEventsAndCloseAfterInitialSendFails() async throws {
+        let fixture = RealtimeScriptedTransport()
+        fixture.holdInitialSend = true
+        let session = fixture.makeSession()
+        defer { session.disconnect() }
+        session.handleConnectionState(.ready)
+        let socketError = NWError.posix(.ENOTCONN)
+        fixture.connectionState = .failed(socketError)
+        fixture.failInitialSend(socketError)
+        try await fixture.stateRead.value()
+
+        let recorder = RealtimeMessageRecorder(expectedCount: 1)
+        let reader = recorder.consume(session.receiver)
+        defer { reader.cancel() }
+        try #require(fixture.cancelCount == 0)
+        fixture.deliverMessage(RealtimeTestFixtures.structuredError)
+        try await fixture.waitForReceive(2)
+        let reason = Data("fixture".utf8)
+        fixture.deliver(.success(.closed(code: 1008, reason: reason, error: socketError)))
+        do {
+            try await recorder.finished.value()
+            Issue.record("Expected the peer's abnormal close")
+        } catch OpenAIRealtimeSessionError.closed(let code, let receivedReason, _) {
+            #expect(code == 1008)
+            #expect(receivedReason == reason)
+        }
+        #expect(recorder.messages.map(RealtimeMessageRecorder.label) == ["error:server_error_1"])
+    }
+
+    @Test
     func earlyProviderErrorRemainsAvailableAfterNormalDisconnect() async throws {
         let fixture = RealtimeScriptedTransport()
         let session = fixture.makeSession()
-        fixture.deliver(.success(.string(RealtimeTestFixtures.structuredError)))
+        fixture.deliverMessage(RealtimeTestFixtures.structuredError)
         try await fixture.waitForReceive(2)
         session.disconnect()
 
@@ -187,7 +244,7 @@ struct OpenAIRealtimeSessionFailureTests {
         #expect(fixture.resumeCount == 1)
         #expect(fixture.cancelCount == 0)
         // A failed command does not impose teardown policy on the caller.
-        fixture.deliver(.success(.string(RealtimeTestFixtures.text)))
+        fixture.deliverMessage(RealtimeTestFixtures.text)
         try await fixture.waitForReceive(2)
         #expect(fixture.sent.count == 2)
     }
@@ -253,6 +310,31 @@ struct OpenAIRealtimeSessionFailureTests {
         #expect(fixture.pendingReceivers.isEmpty)
     }
 
+    @Test(arguments: [false, true])
+    func confirmedAbnormalCloseRetainsSuppliedUnderlyingError(_ hasCause: Bool) async throws {
+        let fixture = RealtimeScriptedTransport()
+        let session = fixture.makeSession()
+        defer { session.disconnect() }
+        let cause = hasCause ? RealtimeReferenceFailure() : nil
+        let reason = Data("fixture".utf8)
+        fixture.deliver(.success(.closed(code: 1008, reason: reason, error: cause)))
+        let recorder = RealtimeMessageRecorder(expectedCount: 0)
+        let reader = recorder.consume(session.receiver)
+        defer { reader.cancel() }
+        do {
+            try await recorder.finished.value()
+            Issue.record("Confirmed abnormal close must throw")
+        } catch OpenAIRealtimeSessionError.closed(let code, let receivedReason, let underlyingError) {
+            #expect(code == 1008)
+            #expect(receivedReason == reason)
+            if let cause {
+                #expect(underlyingError as? RealtimeReferenceFailure === cause)
+            } else {
+                #expect(underlyingError == nil)
+            }
+        }
+    }
+
     @Test
     func malformedKnownEventThrowsItsDecodingError() async throws {
         let fixture = RealtimeScriptedTransport()
@@ -266,7 +348,7 @@ struct OpenAIRealtimeSessionFailureTests {
         var expectedError: Error?
         do { _ = try JSONDecoder().decode(OpenAIRealtimeMessage.self, from: bytes) }
         catch { expectedError = error }
-        fixture.deliver(.success(.data(bytes)))
+        fixture.deliver(.success(.message(bytes)))
         do {
             try await recorder.finished.value()
             Issue.record("Malformed known event must terminate with decoding failure")
@@ -349,7 +431,7 @@ struct OpenAIRealtimeSessionFailureTests {
         defer { session.disconnect() }
         let recorder = RealtimeMessageRecorder(expectedCount: 1)
         let reader = recorder.consume(session.receiver)
-        fixture.deliver(.success(.string(RealtimeTestFixtures.text)))
+        fixture.deliverMessage(RealtimeTestFixtures.text)
         _ = try await recorder.delivered.value()
         try await fixture.waitForReceive(2)
         reader.cancel()
@@ -381,7 +463,7 @@ struct OpenAIRealtimeSessionFailureTests {
             }
         }
         defer { reader.cancel() }
-        fixture.deliver(.success(.string(RealtimeTestFixtures.text)))
+        fixture.deliverMessage(RealtimeTestFixtures.text)
         try await handling.value()
         try await fixture.waitForReceive(2)
         reader.cancel()
@@ -423,7 +505,7 @@ struct OpenAIRealtimeSessionFailureTests {
             Issue.record("The reader must return while handling its first event")
         }
         defer { reader.cancel() }
-        fixture.deliver(.success(.string(RealtimeTestFixtures.text)))
+        fixture.deliverMessage(RealtimeTestFixtures.text)
         try await finished.value()
         try await reader.value
         #expect(!reader.isCancelled)
@@ -451,7 +533,7 @@ struct OpenAIRealtimeSessionFailureTests {
                       RealtimeTestFixtures.failedResponse, RealtimeTestFixtures.text,
                       RealtimeTestFixtures.audio, #"{"type":"future.event","opaque":true}"#]
         for (index, event) in events.enumerated() {
-            fixture.deliver(.success(.string(event)))
+            fixture.deliverMessage(event)
             try await fixture.waitForReceive(index + 2)
         }
         let messages = try await recorder.delivered.value()
@@ -489,13 +571,15 @@ struct OpenAIRealtimeSessionFailureTests {
 
 @AIProxyActor
 private final class RealtimeScriptedTransport {
-    typealias Callback = @Sendable (Result<URLSessionWebSocketTask.Message, Error>) -> Void
+    typealias Callback = OpenAIRealtimeTransport.ReceiveCompletion
     let cancelled = RealtimeTestSignal<Void>()
     let initialSendExited = RealtimeTestSignal<Void>()
-    private let initialSendGate = RealtimeTestSignal<Void>()
+    let stateRead = RealtimeTestSignal<Void>()
+    var connectionState: NWConnection.State = .ready
+    private var pendingSend: OpenAIRealtimeTransport.SendCompletion?
     var holdInitialSend = false
     var sendFailures: [Int: Error] = [:]
-    private(set) var sent: [URLSessionWebSocketTask.Message] = []
+    private(set) var sent: [Data] = []
     private(set) var pendingReceivers: [Callback] = []
     private var retiredReceivers: [Callback] = []
     private(set) var receiveCount = 0
@@ -507,14 +591,14 @@ private final class RealtimeScriptedTransport {
 
     func makeSession() -> OpenAIRealtimeSession {
         let transport = OpenAIRealtimeTransport(
-            send: { [self] message in
+            send: { [self] message, completion in
                 sent.append(message)
                 sendSignals[sent.count]?.succeed(())
                 if holdInitialSend, sent.count == 1 {
-                    defer { initialSendExited.succeed(()) }
-                    try await initialSendGate.value()
+                    pendingSend = completion
+                } else {
+                    completion(sendFailures[sent.count])
                 }
-                if let error = sendFailures[sent.count] { throw error }
             },
             receive: { [self] callback in
                 receiveCount += 1
@@ -522,28 +606,42 @@ private final class RealtimeScriptedTransport {
                 maximumPendingReceives = max(maximumPendingReceives, pendingReceivers.count)
                 receiveSignals[receiveCount]?.succeed(())
             },
-            resume: { [self] in resumeCount += 1 },
+            state: { [self] in
+                stateRead.succeed(())
+                return connectionState
+            },
+            start: { [self] _ in resumeCount += 1 },
             cancel: { [self] in
                 cancelCount += 1
                 retiredReceivers.append(contentsOf: pendingReceivers)
                 pendingReceivers.removeAll()
-                if holdInitialSend { initialSendGate.fail(CancellationError()) }
+                if pendingSend != nil { failInitialSend(CancellationError()) }
                 cancelled.succeed(())
-            },
-            closeCode: { .invalid },
-            closeReason: { nil }
+            }
         )
-        return OpenAIRealtimeSession(transport: transport, sessionConfiguration: .init())
+        let session = OpenAIRealtimeSession(transport: transport, sessionConfiguration: .init())
+        session.start()
+        return session
     }
 
-    func deliver(_ result: Result<URLSessionWebSocketTask.Message, Error>) {
+    func deliverMessage(_ text: String) {
+        deliver(.success(.message(Data(text.utf8))))
+    }
+
+    func deliver(_ result: Result<OpenAIRealtimeTransport.Frame, Error>) {
         precondition(!pendingReceivers.isEmpty, "Test must deliver only to a pending receive")
         pendingReceivers.removeFirst()(result)
     }
 
-    func deliverLate(_ result: Result<URLSessionWebSocketTask.Message, Error>) {
+    func deliverLate(_ result: Result<OpenAIRealtimeTransport.Frame, Error>) {
         for callback in retiredReceivers { callback(result) }
         retiredReceivers.removeAll()
+    }
+
+    func failInitialSend(_ error: Error) {
+        pendingSend?(error)
+        pendingSend = nil
+        initialSendExited.succeed(())
     }
 
     func waitForReceive(_ count: Int) async throws {

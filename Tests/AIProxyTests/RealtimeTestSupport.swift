@@ -62,6 +62,7 @@ nonisolated enum RealtimeTestFailure: Error {
 nonisolated final class RealtimeLoopbackServer: @unchecked Sendable {
     enum Upgrade: Sendable {
         case accept
+        case deferred
         case reject(Int)
         case httpOK
     }
@@ -72,17 +73,19 @@ nonisolated final class RealtimeLoopbackServer: @unchecked Sendable {
     let acceptedConnections = RealtimeTestSignal<Void>()
     let peerClosed = RealtimeTestSignal<Void>()
     let stoppedListening = RealtimeTestSignal<Void>()
-    let firstClientMessage = RealtimeTestSignal<Void>()
-    let firstTwoClientMessages = RealtimeTestSignal<[String]>()
+    let firstClientText = RealtimeTestSignal<String>()
+    let secondClientText = RealtimeTestSignal<String>()
+    let clientPong = RealtimeTestSignal<Data>()
     private let queue = DispatchQueue(label: "AIProxyTests.RealtimeLoopbackServer")
     private let listener: NWListener
     private let upgrade: Upgrade
     private var connection: NWConnection?
     private var handshake = Data()
     private var clientFrames = Data()
-    private var clientMessages: [String] = []
     private var isUpgraded = false
+    private var releaseUpgrade = false
     private var sentClose = false
+    private var clientTextCount = 0
     private var stopped = false
 
     init(upgrade: Upgrade = .accept, parameters: NWParameters = .tcp) throws {
@@ -120,14 +123,18 @@ nonisolated final class RealtimeLoopbackServer: @unchecked Sendable {
         listener.start(queue: queue)
     }
 
-    func sendText(_ messages: [String]) async throws {
+    func sendText(_ messages: [String], closingWith code: UInt16? = nil, reason: String = "") async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async { [self] in
                 guard let connection, isUpgraded, !stopped else {
                     continuation.resume(throwing: RealtimeTestFailure.invalidHandshake)
                     return
                 }
-                let data = messages.reduce(into: Data()) { $0.append(Self.frame(opcode: 1, payload: Data($1.utf8))) }
+                var data = messages.reduce(into: Data()) { $0.append(Self.frame(opcode: 1, payload: Data($1.utf8))) }
+                if let code {
+                    data.append(Self.closeFrame(code: code, reason: reason))
+                    sentClose = true
+                }
                 connection.send(content: data, completion: .contentProcessed { error in
                     if let error { continuation.resume(throwing: error) }
                     else { continuation.resume() }
@@ -136,10 +143,21 @@ nonisolated final class RealtimeLoopbackServer: @unchecked Sendable {
         }
     }
 
-    func close(code: UInt16, reason: String = "") async throws {
+    func acceptDeferredUpgrade() {
+        queue.async { [self] in
+            releaseUpgrade = true
+            processHandshake()
+        }
+    }
+
+    private static func closeFrame(code: UInt16, reason: String) -> Data {
         var payload = Data([UInt8(code >> 8), UInt8(code & 255)])
         payload.append(contentsOf: reason.utf8)
-        let frame = Self.frame(opcode: 8, payload: payload)
+        return frame(opcode: 8, payload: payload)
+    }
+
+    func close(code: UInt16, reason: String = "") async throws {
+        let frame = Self.closeFrame(code: code, reason: reason)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async { [self] in
                 guard let connection, isUpgraded, !stopped else {
@@ -147,6 +165,22 @@ nonisolated final class RealtimeLoopbackServer: @unchecked Sendable {
                     return
                 }
                 sentClose = true
+                connection.send(content: frame, completion: .contentProcessed { error in
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume() }
+                })
+            }
+        }
+    }
+
+    func sendFrame(opcode: UInt8, payload: Data, isFinal: Bool = true) async throws {
+        let frame = Self.frame(opcode: opcode, payload: payload, isFinal: isFinal)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            queue.async { [self] in
+                guard let connection, isUpgraded, !stopped else {
+                    continuation.resume(throwing: RealtimeTestFailure.invalidHandshake)
+                    return
+                }
                 connection.send(content: frame, completion: .contentProcessed { error in
                     if let error { continuation.resume(throwing: error) }
                     else { continuation.resume() }
@@ -201,7 +235,9 @@ nonisolated final class RealtimeLoopbackServer: @unchecked Sendable {
         requestReceived.succeed(request)
         let response: String
         switch upgrade {
-        case .accept:
+        case .deferred where !releaseUpgrade:
+            return
+        case .accept, .deferred:
             guard let keyLine = request.components(separatedBy: "\r\n").first(where: {
                 $0.lowercased().hasPrefix("sec-websocket-key:")
             }), let key = keyLine.split(separator: ":", maxSplits: 1).last else {
@@ -253,11 +289,7 @@ nonisolated final class RealtimeLoopbackServer: @unchecked Sendable {
                 for index in payload.indices { payload[index] ^= bytes[offset + index % 4] }
             }
             clientFrames.removeFirst(offset + maskLength + length)
-            if opcode == 1 {
-                clientMessages.append(String(decoding: payload, as: UTF8.self))
-                if clientMessages.count == 1 { firstClientMessage.succeed(()) }
-                if clientMessages.count == 2 { firstTwoClientMessages.succeed(clientMessages) }
-            } else if opcode == 8 {
+            if opcode == 8 {
                 peerClosed.succeed(())
                 if !sentClose {
                     sentClose = true
@@ -267,17 +299,26 @@ nonisolated final class RealtimeLoopbackServer: @unchecked Sendable {
                 }
             } else if opcode == 9 {
                 connection?.send(content: Self.frame(opcode: 10, payload: Data(payload)), completion: .contentProcessed { _ in })
+            } else if opcode == 10 {
+                clientPong.succeed(Data(payload))
+            } else if opcode == 1 {
+                clientTextCount += 1
+                let text = String(decoding: payload, as: UTF8.self)
+                if clientTextCount == 1 { firstClientText.succeed(text) }
+                if clientTextCount == 2 { secondClientText.succeed(text) }
             }
         }
     }
 
-    private static func frame(opcode: UInt8, payload: Data) -> Data {
-        precondition(payload.count <= UInt16.max)
-        var data = Data([0x80 | opcode])
+    private static func frame(opcode: UInt8, payload: Data, isFinal: Bool = true) -> Data {
+        var data = Data([(isFinal ? 0x80 : 0) | opcode])
         if payload.count < 126 {
             data.append(UInt8(payload.count))
-        } else {
+        } else if payload.count <= UInt16.max {
             data.append(contentsOf: [126, UInt8(payload.count >> 8), UInt8(payload.count & 255)])
+        } else {
+            data.append(127)
+            withUnsafeBytes(of: UInt64(payload.count).bigEndian) { data.append(contentsOf: $0) }
         }
         data.append(payload)
         return data

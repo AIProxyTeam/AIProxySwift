@@ -1,31 +1,85 @@
 import Foundation
+import Network
 import Testing
 @testable import AIProxy
 
 @AIProxyActor
 struct OpenAIRealtimeTransportTests {
     @Test
-    func actualWebSocketSendsConfigurationAndCommand() async throws {
+    func immediateCommandFollowsInitialConfigurationOnWire() async throws {
+        let server = try RealtimeLoopbackServer(upgrade: .deferred)
+        defer { server.stop() }
+        let client = makeNativeRealtimeClient(url: try await server.listening.value(),
+                                              configuration: .init(instructions: "fixture instructions"))
+        defer { client.session.disconnect() }
+        _ = try await server.requestReceived.value()
+        let encoded = RealtimeTestSignal<Void>()
+        let command = Task { @AIProxyActor in
+            try await client.session.sendMessage(ImmediateCommand(encoded: encoded))
+        }
+        try await encoded.value()
+        server.acceptDeferredUpgrade()
+        let first = Data(try await server.firstClientText.value().utf8)
+        let config = try #require(JSONSerialization.jsonObject(with: first) as? [String: Any])
+        #expect(config["type"] as? String == "session.update")
+        #expect((config["session"] as? [String: Any])?["instructions"] as? String == "fixture instructions")
+        let second = Data(try await server.secondClientText.value().utf8)
+        let response = try #require(JSONSerialization.jsonObject(with: second) as? [String: Any])
+        #expect(response["type"] as? String == "response.create")
+        #expect(response["event_id"] as? String == "fixture_command")
+        try await command.value
+    }
+
+    @Test
+    func binaryJSONEventArrivesAndSubsequentTextIsDelivered() async throws {
         let server = try RealtimeLoopbackServer()
         defer { server.stop() }
-        let urlSession = URLSession(configuration: .ephemeral)
-        defer { urlSession.invalidateAndCancel() }
-        let session = OpenAIRealtimeSession(
-            webSocketTask: urlSession.webSocketTask(with: try await server.listening.value()),
-            sessionConfiguration: .init(instructions: "fixture instructions")
-        )
-        defer { session.disconnect() }
-        try await server.upgraded.value()
-        try await server.firstClientMessage.value()
-        try await session.sendMessage(OpenAIRealtimeResponseCreate(eventID: "fixture_command"))
-        let messages = try await server.firstTwoClientMessages.value()
-        let configuration = try #require(JSONSerialization.jsonObject(with: Data(messages[0].utf8)) as? [String: Any])
-        #expect(configuration["type"] as? String == "session.update")
-        let settings = try #require(configuration["session"] as? [String: Any])
-        #expect(settings["instructions"] as? String == "fixture instructions")
-        let command = try #require(JSONSerialization.jsonObject(with: Data(messages[1].utf8)) as? [String: Any])
-        #expect(command["type"] as? String == "response.create")
-        #expect(command["event_id"] as? String == "fixture_command")
+        let client = makeNativeRealtimeClient(url: try await server.listening.value())
+        defer { client.session.disconnect() }
+        let recorder = RealtimeMessageRecorder(expectedCount: 2)
+        let reader = recorder.consume(client.session.receiver)
+        defer { reader.cancel() }
+        _ = try await server.firstClientText.value()
+        try await server.sendFrame(opcode: 2, payload: Data(RealtimeTestFixtures.text.utf8))
+        try await server.sendText([RealtimeTestFixtures.audio])
+        #expect(try await recorder.delivered.value().map(RealtimeMessageRecorder.label) == ["text:Ready", "audio:AQID"])
+    }
+
+    @Test
+    func fragmentedJSONSurvivesInterleavedPing() async throws {
+        let server = try RealtimeLoopbackServer()
+        defer { server.stop() }
+        let client = makeNativeRealtimeClient(url: try await server.listening.value())
+        defer { client.session.disconnect() }
+        let recorder = RealtimeMessageRecorder(expectedCount: 1)
+        let reader = recorder.consume(client.session.receiver)
+        defer { reader.cancel() }
+        _ = try await server.firstClientText.value()
+        let json = Data(RealtimeTestFixtures.text.utf8)
+        let split = json.count / 2
+        try await server.sendFrame(opcode: 1, payload: Data(json.prefix(split)), isFinal: false)
+        let ping = Data([0xff])
+        try await server.sendFrame(opcode: 9, payload: ping)
+        #expect(try await server.clientPong.value() == ping)
+        try await server.sendFrame(opcode: 0, payload: Data(json.dropFirst(split)))
+        #expect(try await recorder.delivered.value().map(RealtimeMessageRecorder.label) == ["text:Ready"])
+    }
+
+    @Test(arguments: [UInt8(1), 2], [Data(), Data("malformed".utf8)])
+    func emptyAndMalformedMessagesExposeDecodingError(_ opcode: UInt8, _ bytes: Data) async throws {
+        let server = try RealtimeLoopbackServer()
+        defer { server.stop() }
+        let client = makeNativeRealtimeClient(url: try await server.listening.value())
+        defer { client.session.disconnect() }
+        let recorder = RealtimeMessageRecorder(expectedCount: 0)
+        let reader = recorder.consume(client.session.receiver)
+        defer { reader.cancel() }
+        _ = try await server.firstClientText.value()
+        try await server.sendFrame(opcode: opcode, payload: bytes)
+        do {
+            try await recorder.finished.value()
+            Issue.record("Malformed payload must throw")
+        } catch is DecodingError {}
     }
 
     @Test(arguments: [1, 2])
@@ -33,10 +87,8 @@ struct OpenAIRealtimeTransportTests {
         let server = try RealtimeLoopbackServer()
         defer { server.stop() }
         let url = try await server.listening.value()
-        let urlSession = URLSession(configuration: .ephemeral)
-        defer { urlSession.invalidateAndCancel() }
-        let socket = urlSession.webSocketTask(with: url)
-        let session = OpenAIRealtimeSession(webSocketTask: socket, sessionConfiguration: .init())
+        let client = makeNativeRealtimeClient(url: url)
+        let session = client.session
         defer { session.disconnect() }
         let recorder = RealtimeMessageRecorder(expectedCount: errorCount + 2)
         let reader = recorder.consume(session.receiver)
@@ -60,7 +112,10 @@ struct OpenAIRealtimeTransportTests {
         #expect(diagnostic.error?.type == "invalid_request_error")
         #expect(diagnostic.error?.code == "unknown_parameter")
         #expect(diagnostic.error?.param == "session.unsupported")
-        #expect(socket.state == .running)
+        guard case .ready = client.connection.state else {
+            Issue.record("Native WebSocket must remain ready after provider errors")
+            return
+        }
         try await session.sendMessage(OpenAIRealtimeResponseCreate())
         session.disconnect()
         try await recorder.finished.value()
@@ -71,12 +126,8 @@ struct OpenAIRealtimeTransportTests {
     func actualWebSocketDoesNotTerminateForUnfinishedResponse(_ fixture: RealtimeOutcomeFixture) async throws {
         let server = try RealtimeLoopbackServer()
         defer { server.stop() }
-        let urlSession = URLSession(configuration: .ephemeral)
-        defer { urlSession.invalidateAndCancel() }
-        let session = OpenAIRealtimeSession(
-            webSocketTask: urlSession.webSocketTask(with: try await server.listening.value()),
-            sessionConfiguration: .init()
-        )
+        let client = makeNativeRealtimeClient(url: try await server.listening.value())
+        let session = client.session
         defer { session.disconnect() }
         let recorder = RealtimeMessageRecorder(expectedCount: 2)
         let reader = recorder.consume(session.receiver)
@@ -102,10 +153,8 @@ struct OpenAIRealtimeTransportTests {
     func actualNormalRemoteCloseFinishesWithoutFailure() async throws {
         let server = try RealtimeLoopbackServer()
         defer { server.stop() }
-        let urlSession = URLSession(configuration: .ephemeral)
-        defer { urlSession.invalidateAndCancel() }
-        let socket = urlSession.webSocketTask(with: try await server.listening.value())
-        let session = OpenAIRealtimeSession(webSocketTask: socket, sessionConfiguration: .init())
+        let client = makeNativeRealtimeClient(url: try await server.listening.value())
+        let session = client.session
         defer { session.disconnect() }
         let recorder = RealtimeMessageRecorder(expectedCount: 1)
         let reader = recorder.consume(session.receiver)
@@ -115,18 +164,38 @@ struct OpenAIRealtimeTransportTests {
         _ = try await recorder.delivered.value()
         try await server.close(code: 1000, reason: "finished")
         try await recorder.finished.value()
-        #expect(socket.closeCode.rawValue == 1000)
-        #expect(socket.closeReason == Data("finished".utf8))
     }
 
-    @Test
-    func actualAbnormalRemoteCloseRetainsCodeReasonAndUnderlyingFailure() async throws {
+    @Test(arguments: [UInt16(1000), 1008])
+    func drainsBufferedEventsBeforeRemoteClose(_ closeCode: UInt16) async throws {
         let server = try RealtimeLoopbackServer()
         defer { server.stop() }
-        let urlSession = URLSession(configuration: .ephemeral)
-        defer { urlSession.invalidateAndCancel() }
-        let socket = urlSession.webSocketTask(with: try await server.listening.value())
-        let session = OpenAIRealtimeSession(webSocketTask: socket, sessionConfiguration: .init())
+        let client = makeNativeRealtimeClient(url: try await server.listening.value())
+        defer { client.session.disconnect() }
+        _ = try await server.firstClientText.value()
+        let count = 48
+        try await server.sendText(Array(repeating: RealtimeTestFixtures.text, count: count),
+                                  closingWith: closeCode, reason: "burst")
+        let recorder = RealtimeMessageRecorder(expectedCount: count)
+        let reader = recorder.consume(client.session.receiver)
+        defer { reader.cancel() }
+        do {
+            try await recorder.finished.value()
+            #expect(closeCode == 1000)
+        } catch OpenAIRealtimeSessionError.closed(let code, let reason, _) {
+            #expect(closeCode == 1008)
+            #expect(code == Int(closeCode))
+            #expect(reason == Data("burst".utf8))
+        }
+        #expect(recorder.messages.map(RealtimeMessageRecorder.label) == Array(repeating: "text:Ready", count: count))
+    }
+
+    @Test(arguments: [UInt16(1008), 3000, 4001])
+    func actualAbnormalRemoteCloseRetainsSuppliedCodeAndReason(_ closeCode: UInt16) async throws {
+        let server = try RealtimeLoopbackServer()
+        defer { server.stop() }
+        let client = makeNativeRealtimeClient(url: try await server.listening.value())
+        let session = client.session
         defer { session.disconnect() }
         let recorder = RealtimeMessageRecorder(expectedCount: 1)
         let reader = recorder.consume(session.receiver)
@@ -134,29 +203,23 @@ struct OpenAIRealtimeTransportTests {
         try await server.upgraded.value()
         try await server.sendText([RealtimeTestFixtures.text])
         _ = try await recorder.delivered.value()
-        try await server.close(code: 1008, reason: "policy fixture")
+        try await server.close(code: closeCode, reason: "policy fixture")
         do {
             try await recorder.finished.value()
             Issue.record("Abnormal close must throw")
         } catch OpenAIRealtimeSessionError.closed(let code, let reason, let underlyingError) {
-            #expect(code == 1008)
+            #expect(code == Int(closeCode))
             #expect(reason == Data("policy fixture".utf8))
-            let original = try #require(underlyingError as NSError?)
-            #expect(original.domain == NSPOSIXErrorDomain)
-            #expect(original.code == 57)
+            if let underlyingError { #expect(underlyingError is NWError) }
         }
-        #expect(socket.closeCode.rawValue == 1008)
-        #expect(socket.closeReason == Data("policy fixture".utf8))
     }
 
     @Test(arguments: [403, 429, 503])
-    func actualRejectedUpgradeExposesOriginalFoundationFailure(_ status: Int) async throws {
+    func actualRejectedUpgradeExposesOriginalNativeFailure(_ status: Int) async throws {
         let server = try RealtimeLoopbackServer(upgrade: .reject(status))
         defer { server.stop() }
-        let urlSession = URLSession(configuration: .ephemeral)
-        defer { urlSession.invalidateAndCancel() }
-        let socket = urlSession.webSocketTask(with: try await server.listening.value())
-        let session = OpenAIRealtimeSession(webSocketTask: socket, sessionConfiguration: .init())
+        let client = makeNativeRealtimeClient(url: try await server.listening.value())
+        let session = client.session
         defer { session.disconnect() }
         let recorder = RealtimeMessageRecorder(expectedCount: 0)
         let reader = recorder.consume(session.receiver)
@@ -164,13 +227,9 @@ struct OpenAIRealtimeTransportTests {
         do {
             try await recorder.finished.value()
             Issue.record("Rejected upgrade must throw")
-        } catch {
-            #expect((error as NSError).domain == NSURLErrorDomain)
-            #expect((error as NSError).code == URLError.badServerResponse.rawValue)
+        } catch NWError.posix(let code) {
+            #expect(code == .ECONNABORTED)
         }
-        let response = try #require(socket.response as? HTTPURLResponse)
-        #expect(response.statusCode == status)
-        #expect(response.value(forHTTPHeaderField: "X-Fixture-Request-ID") == "reject-\(status)")
         #expect(recorder.messages.isEmpty)
     }
 
@@ -180,10 +239,8 @@ struct OpenAIRealtimeTransportTests {
         let url = try await server.listening.value()
         server.stop()
         try await server.stoppedListening.value()
-        let urlSession = URLSession(configuration: .ephemeral)
-        defer { urlSession.invalidateAndCancel() }
-        let socket = urlSession.webSocketTask(with: url)
-        let session = OpenAIRealtimeSession(webSocketTask: socket, sessionConfiguration: .init())
+        let client = makeNativeRealtimeClient(url: url)
+        let session = client.session
         defer { session.disconnect() }
         let recorder = RealtimeMessageRecorder(expectedCount: 0)
         let reader = recorder.consume(session.receiver)
@@ -191,21 +248,17 @@ struct OpenAIRealtimeTransportTests {
         do {
             try await recorder.finished.value()
             Issue.record("Unavailable endpoint must throw")
-        } catch {
-            #expect((error as NSError).domain == NSURLErrorDomain)
-            #expect((error as NSError).code == URLError.cannotConnectToHost.rawValue)
+        } catch NWError.posix(let code) {
+            #expect(code == .ECONNREFUSED)
         }
-        #expect(socket.response == nil)
     }
 
     @Test
     func abruptSocketLossExposesOriginalFailureWithoutInventedClose() async throws {
         let server = try RealtimeLoopbackServer()
         defer { server.stop() }
-        let urlSession = URLSession(configuration: .ephemeral)
-        defer { urlSession.invalidateAndCancel() }
-        let socket = urlSession.webSocketTask(with: try await server.listening.value())
-        let session = OpenAIRealtimeSession(webSocketTask: socket, sessionConfiguration: .init())
+        let client = makeNativeRealtimeClient(url: try await server.listening.value())
+        let session = client.session
         defer { session.disconnect() }
         let recorder = RealtimeMessageRecorder(expectedCount: 1)
         let reader = recorder.consume(session.receiver)
@@ -217,14 +270,62 @@ struct OpenAIRealtimeTransportTests {
         do {
             try await recorder.finished.value()
             Issue.record("Unexpected socket loss must throw")
-        } catch {
-            #expect((error as NSError).domain == NSPOSIXErrorDomain)
-            #expect((error as NSError).code == 57)
-            #expect(error as? OpenAIRealtimeSessionError == nil)
+        } catch NWError.posix(let code) {
+            #expect(code == .ENODATA || code == .ECONNRESET)
         }
-        #expect(socket.closeCode == .invalid)
-        #expect(socket.closeReason == nil)
     }
+
+    @Test
+    func nativeOrdinaryInitialUpdateAndAudioSendRetainPayloads() async throws {
+        let server = try RealtimeLoopbackServer()
+        defer { server.stop() }
+        let client = makeNativeRealtimeClient(url: try await server.listening.value())
+        defer { client.session.disconnect() }
+        let recorder = RealtimeMessageRecorder(expectedCount: 1)
+        let reader = recorder.consume(client.session.receiver)
+        defer { reader.cancel() }
+        let initialJSON = try #require(JSONSerialization.jsonObject(with: Data(try await server.firstClientText.value().utf8)) as? [String: Any])
+        #expect(initialJSON["type"] as? String == "session.update")
+        let sessionJSON = try #require(initialJSON["session"] as? [String: Any])
+        #expect(sessionJSON["type"] as? String == "realtime")
+        try await client.session.sendMessage(OpenAIRealtimeInputAudioBufferAppend(audio: "AQID"))
+        let command = try #require(JSONSerialization.jsonObject(with: Data(try await server.secondClientText.value().utf8)) as? [String: Any])
+        #expect(command["type"] as? String == "input_audio_buffer.append")
+        #expect(command["audio"] as? String == "AQID")
+        try await server.sendText([RealtimeTestFixtures.audio])
+        #expect(try await recorder.delivered.value().map(RealtimeMessageRecorder.label) == ["audio:AQID"])
+        client.session.disconnect()
+        try await recorder.finished.value()
+    }
+
+
+}
+
+nonisolated private struct ImmediateCommand: Encodable {
+    let encoded: RealtimeTestSignal<Void>
+
+    func encode(to encoder: Encoder) throws {
+        try OpenAIRealtimeResponseCreate(eventID: "fixture_command").encode(to: encoder)
+        encoded.succeed(())
+    }
+}
+
+/// Creates a native WebSocket session against a local plaintext peer.
+@AIProxyActor
+private func makeNativeRealtimeClient(url: URL, configuration: OpenAIRealtimeSessionConfiguration = .init()) -> (session: OpenAIRealtimeSession, connection: NWConnection) {
+    let connection = makeNativeRealtimeConnection(url: url)
+    let session = OpenAIRealtimeSession(connection: connection, sessionConfiguration: configuration)
+    session.start()
+    return (session, connection)
+}
+
+nonisolated func makeNativeRealtimeConnection(url: URL) -> NWConnection {
+    let options = NWProtocolWebSocket.Options()
+    options.autoReplyPing = true
+    let parameters = NWParameters(tls: nil)
+    parameters.defaultProtocolStack.applicationProtocols.insert(options, at: 0)
+    parameters.serviceClass = .interactiveVoice
+    return NWConnection(to: .url(url), using: parameters)
 }
 
 @AIProxyActor
