@@ -128,7 +128,8 @@ nonisolated private let kWebsocketDisconnectedEarlyThreshold: TimeInterval = 3
             let message = try JSONDecoder().decode(OpenAIRealtimeMessage.self, from: data)
             self.continuation?.yield(message)
             if case .error(let errorEvent) = message {
-                logIf(.error)?.error("Received realtime error event from OpenAI: \(errorEvent.errorBody ?? "no body")")
+                let details = errorEvent.error?.message ?? errorEvent.error?.type ?? errorEvent.error?.code ?? "no body"
+                logIf(.error)?.error("Received realtime error event from OpenAI: \(details)")
                 return
             }
             if !self.isTearingDown {
