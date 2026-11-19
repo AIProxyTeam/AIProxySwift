@@ -51,6 +51,22 @@ import Foundation
 /// please report them to me.
 nonisolated public final class AIProxyCertificatePinningDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, URLSessionDataDelegate {
 
+    private let pinnedPublicKeys: [Data]
+
+    let configureRealtimeTrust: (@Sendable (SecTrust) -> OSStatus)?
+
+    public override init() {
+        self.pinnedPublicKeys = publicKeysAsData
+        self.configureRealtimeTrust = nil
+        super.init()
+    }
+
+    init(pinnedPublicKeys: [Data], configureRealtimeTrust: (@Sendable (SecTrust) -> OSStatus)? = nil) {
+        self.pinnedPublicKeys = pinnedPublicKeys
+        self.configureRealtimeTrust = configureRealtimeTrust
+        super.init()
+    }
+
     nonisolated(unsafe) private var _progressCallback: (@Sendable (Double) -> Void)?
     public var progressCallback: (@Sendable (Double) -> Void)? {
         get {
@@ -167,22 +183,20 @@ nonisolated public final class AIProxyCertificatePinningDelegate: NSObject, URLS
          return (.cancelAuthenticationChallenge, nil)
       }
 
-      guard let certificate = getServerCert(secTrust: secTrust) else {
-         logIf(.error)?.error("Could not access the server's TLS cert")
-         return (.cancelAuthenticationChallenge, nil)
-      }
-
-      let serverPublicKey = SecCertificateCopyKey(certificate)!
-      let serverPublicKeyData = SecKeyCopyExternalRepresentation(serverPublicKey, nil)!
-
-      for publicKeyData in publicKeysAsData {
-         if serverPublicKeyData as Data == publicKeyData {
-            let credential = URLCredential(trust: secTrust)
-            return (.useCredential, credential)
-         }
-      }
-      return (.cancelAuthenticationChallenge, nil)
+      guard matchesPinnedPublicKey(secTrust) else { return (.cancelAuthenticationChallenge, nil) }
+      return (.useCredential, URLCredential(trust: secTrust))
    }
+
+    /// Both Foundation challenges and native TLS connections use the same leaf public-key pins.
+    func matchesPinnedPublicKey(_ trust: SecTrust) -> Bool {
+        guard let certificate = getServerCert(secTrust: trust),
+              let key = SecCertificateCopyKey(certificate),
+              let data = SecKeyCopyExternalRepresentation(key, nil) as Data? else {
+            logIf(.error)?.error("Could not extract the server's public key")
+            return false
+        }
+        return pinnedPublicKeys.contains(data)
+    }
 
     // MARK: - Deprecated
     @available(*, deprecated, message: "Please use the progressCallback setter directly, e.g. myDelegate.progressCallback = ...")
@@ -283,7 +297,7 @@ nonisolated private func getServerCert(secTrust: SecTrust) -> SecCertificate? {
         guard let certs = SecTrustCopyCertificateChain(secTrust) as? [SecCertificate] else {
             return nil
         }
-        return certs[0]
+        return certs.first
     } else {
         return SecTrustGetCertificateAtIndex(secTrust, 0);
     }
