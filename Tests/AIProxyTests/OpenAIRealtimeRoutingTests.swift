@@ -173,7 +173,11 @@ struct OpenAIRealtimeRoutingTests {
         let (peer, key) = try RealtimeTLSFixture.server()
         defer { peer.stop() }
         let port = try #require(try await peer.listening.value().port)
-        let networker = FixtureProxiedNetworker(keys: pinMatches ? [key] : [], trustFixture: trusted)
+        var configuredPin = key
+        if !pinMatches {
+            configuredPin[configuredPin.startIndex] ^= 1
+        }
+        let networker = FixtureProxiedNetworker(keys: [configuredPin], trustFixture: trusted)
         defer { networker.urlSession.invalidateAndCancel() }
         let service = OpenAIService(
             requestFormat: .standard,
