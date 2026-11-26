@@ -67,7 +67,7 @@ struct OpenAIRealtimeDiagnosticsTests {
     @Test(arguments: ["failed", "incomplete", "cancelled"])
     func unfinishedResponseRetainsStatusDetails(_ status: String) throws {
         let json = """
-        {"type":"response.done","response":{"id":"response_outcome","conversation_id":"conversation_outcome","status":"\(status)","status_details":{"type":"\(status)","reason":"supplied_reason","error":{"code":"supplied_code","type":"supplied_error_type"}}}}
+        {"type":"response.done","response":{"id":"response_outcome","conversation_id":"conversation_outcome","status":"\(status)","output":[{"id":"msg_partial","phase":"commentary"}],"status_details":{"type":"\(status)","reason":"supplied_reason","error":{"code":"supplied_code","type":"supplied_error_type"}}}}
         """
         guard case .responseDone(let payload) = try decode(json) else {
             Issue.record("Expected response outcome")
@@ -76,6 +76,7 @@ struct OpenAIRealtimeDiagnosticsTests {
         #expect(payload.responseID == "response_outcome")
         #expect(payload.conversationID == "conversation_outcome")
         #expect(payload.status == status)
+        #expect(payload.output?.first?.phase == .commentary)
         #expect(payload.statusDetails?.type == status)
         #expect(payload.statusDetails?.reason == "supplied_reason")
         #expect(payload.statusDetails?.error?.code == "supplied_code")
