@@ -522,6 +522,17 @@ public struct OpenAIRealtimeResponseDoneEvent: Decodable, Sendable {
             case statusDetails = "status_details"
             case usage
         }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decodeIfPresent(String.self, forKey: .id)
+            conversationID = try container.decodeIfPresent(String.self, forKey: .conversationID)
+            status = try container.decodeIfPresent(String.self, forKey: .status)
+            output = try container.decodeIfPresent([OpenAIRealtimeResponseOutputItem].self, forKey: .output)
+            usage = try container.decodeIfPresent(OpenAIRealtimeResponseUsage.self, forKey: .usage)
+            // An unexpected diagnostic shape must not discard the response or stop receiving.
+            statusDetails = try? container.decodeIfPresent(StatusDetails.self, forKey: .statusDetails)
+        }
     }
 
     private enum CodingKeys: String, CodingKey {

@@ -1308,6 +1308,14 @@ client event ID in `error.eventID`; the outer `eventID` identifies the server ev
 Read these fields instead of the previous `errorBody` property. A provider error
 does not stop reception on an open connection. Check `responseDone.status` and
 `statusDetails` to distinguish completed, cancelled, incomplete, and failed responses.
+If the server sends an unexpected `status_details` shape, `statusDetails` is `nil`
+and the response is still delivered.
+
+Start reading the receiver as soon as `realtimeSession(...)` returns. Wait for
+`.sessionUpdated` (the server's `session.updated` event) before sending audio or
+creating the first response. Returning from the factory does not confirm that
+the server has applied the initial configuration.
+
 The receiver is created before the connection starts; consume it promptly because
 events are buffered without a fixed limit until the receiving task processes them.
 Cancelling while awaiting the next event closes the session. Put
@@ -1540,7 +1548,7 @@ let session = try await openAIService.realtimeSession(
 )
 ```
 
-You can also override Reasoning settings for a single response:
+After receiving `.sessionUpdated`, you can override Reasoning settings for a single response:
 
 ```swift
 try await session.sendMessage(

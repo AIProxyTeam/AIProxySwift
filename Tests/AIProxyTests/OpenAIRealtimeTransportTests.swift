@@ -99,6 +99,46 @@ struct OpenAIRealtimeTransportTests {
     }
 
     @Test
+    func malformedStatusDetailsPreserveResponseAndFollowingEvent() async throws {
+        let server = try RealtimeLoopbackServer()
+        defer { server.stop() }
+        let urlSession = URLSession(configuration: .ephemeral)
+        defer { urlSession.invalidateAndCancel() }
+        let session = OpenAIRealtimeSession(
+            webSocketTask: urlSession.webSocketTask(with: try await server.listening.value()),
+            sessionConfiguration: .init()
+        )
+        defer { session.disconnect() }
+        let recorder = RealtimeMessageRecorder(expectedCount: 2)
+        let reader = recorder.consume(session.receiver)
+        defer { reader.cancel() }
+        try await server.firstClientMessage.value()
+        let response = """
+        {
+            "type": "response.done",
+            "response": {
+                "status": "incomplete",
+                "output": [{"id": "item_fixture", "phase": "final_answer"}],
+                "usage": {"total_tokens": 7},
+                "status_details": "unexpected"
+            }
+        }
+        """
+        try await server.sendText([response, RealtimeTestFixtures.text])
+        let messages = try await recorder.delivered.value()
+        #expect(messages.map(RealtimeMessageRecorder.label) == ["response:incomplete", "text:Ready"])
+        guard case .responseDone(let outcome) = messages.first else {
+            Issue.record("Expected the response to survive malformed diagnostics")
+            return
+        }
+        #expect(outcome.output?.first?.id == "item_fixture")
+        #expect(outcome.usage?.totalTokens == 7)
+        #expect(outcome.statusDetails == nil)
+        try await server.close(code: 1000)
+        try await recorder.finished.value()
+    }
+
+    @Test
     func actualNormalRemoteCloseFinishesWithoutFailure() async throws {
         let server = try RealtimeLoopbackServer()
         defer { server.stop() }
