@@ -1,5 +1,5 @@
 //
-//  UberLLMDirectService.swift
+//  MartLLMDirectService.swift
 //  AIProxy
 //
 //  Created by PSA-Team-source on 11/10/26.
@@ -7,25 +7,25 @@
 
 import Foundation
 
-@AIProxyActor final class UberLLMDirectService: UberLLMService, DirectService, Sendable {
+@AIProxyActor final class MartLLMDirectService: MartLLMService, DirectService, Sendable {
     private let unprotectedAPIKey: String
     private let baseURL: String
 
     /// This initializer is not public on purpose.
-    /// Customers are expected to use the factory `AIProxy.uberllmDirectService` defined in AIProxy.swift
+    /// Customers are expected to use the factory `AIProxy.martllmDirectService` defined in AIProxy.swift
     nonisolated init(
         unprotectedAPIKey: String,
         baseURL: String? = nil
     ) {
         self.unprotectedAPIKey = unprotectedAPIKey
-        self.baseURL = baseURL ?? "https://api.uberllm.dev"
+        self.baseURL = baseURL ?? "https://api.martllm.com"
     }
 
     /// Initiates a non-streaming chat completion request to /v1/chat/completions.
     ///
     /// - Parameters:
-    ///   - body: The request body to send to UberLLM. UberLLM's API is OpenAI compatible. See this reference:
-    ///           https://uberllm.dev/docs
+    ///   - body: The request body to send to MartLLM. MartLLM's API is OpenAI compatible. See this reference:
+    ///           https://martllm.com/docs
     ///   - secondsToWait: The amount of time to wait before `URLError.timedOut` is raised
     /// - Returns: The chat response. See this reference:
     ///            https://platform.openai.com/docs/api-reference/chat/object
@@ -54,8 +54,8 @@ import Foundation
     /// Initiates a streaming chat completion request to /v1/chat/completions.
     ///
     /// - Parameters:
-    ///   - body: The request body to send to UberLLM. UberLLM's API is OpenAI compatible. See this reference:
-    ///           https://uberllm.dev/docs
+    ///   - body: The request body to send to MartLLM. MartLLM's API is OpenAI compatible. See this reference:
+    ///           https://martllm.com/docs
     ///   - secondsToWait: The amount of time to wait before `URLError.timedOut` is raised
     /// - Returns: An async sequence of completion chunks. See this reference:
     ///            https://platform.openai.com/docs/api-reference/chat/streaming

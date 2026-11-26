@@ -1,5 +1,5 @@
 //
-//  UberLLMCodablesTests.swift
+//  MartLLMCodablesTests.swift
 //  AIProxy
 //
 //  Created by PSA-Team-source on 11/10/26.
@@ -8,7 +8,7 @@
 import XCTest
 @testable import AIProxy
 
-final class UberLLMCodablesTests: XCTestCase {
+final class MartLLMCodablesTests: XCTestCase {
 
     func testChatCompletionResponseIsDecodable() throws {
         let serializedBody = #"""
@@ -73,7 +73,7 @@ final class UberLLMCodablesTests: XCTestCase {
     }
 
     func testDirectServiceFactoryReturnsDirectService() {
-        let service = AIProxy.uberllmDirectService(unprotectedAPIKey: "test-key")
-        XCTAssertTrue(service is UberLLMDirectService)
+        let service = AIProxy.martllmDirectService(unprotectedAPIKey: "test-key")
+        XCTAssertTrue(service is MartLLMDirectService)
     }
 }

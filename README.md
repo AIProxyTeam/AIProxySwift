@@ -20,7 +20,7 @@ included:
 - DeepSeek
 - Fireworks AI
 - Runcrate
-- UberLLM
+- MartLLM
 - Brave
 
 Your initialization code determines whether requests go straight to the provider or are
@@ -188,7 +188,7 @@ Once you're happy with your changes, open a PR here.
 * [DeepSeek](#deepseek)
 * [Fireworks AI](#fireworks-ai)
 * [Runcrate](#runcrate)
-* [UberLLM](#uberllm)
+* [MartLLM](#martllm)
 * [Brave](#brave)
 * [gRPC](#grpc)
 * [Advanced Settings](#advanced-settings)
@@ -7343,26 +7343,26 @@ and response types. When you create a service in the AIProxy dashboard, use
 
 ***
 
-## UberLLM
+## MartLLM
 
-[UberLLM](https://uberllm.dev) is one API key for the chat models of many labs (OpenAI, Anthropic,
-Google, DeepSeek, Qwen and more) behind an OpenAI compatible API, so the UberLLM service reuses this
+[MartLLM](https://martllm.com) is one API key for the chat models of many labs (OpenAI, Anthropic,
+Google, DeepSeek, Qwen and more) behind an OpenAI compatible API, so the MartLLM service reuses this
 library's OpenAI request and response types. Model ids look like `vendor/model`; the list is at
-https://api.uberllm.dev/v1/models (public, no key). When you create a service in the AIProxy
-dashboard, use `https://api.uberllm.dev` as the proxy base URL.
+https://api.martllm.com/v1/models (public, no key). When you create a service in the AIProxy
+dashboard, use `https://api.martllm.com` as the proxy base URL.
 
-### How to make a chat completion request with UberLLM
+### How to make a chat completion request with MartLLM
 
 ```swift
     import AIProxy
 
     /* Uncomment for BYOK use cases */
-    // let uberllmService = AIProxy.uberllmDirectService(
-    //     unprotectedAPIKey: "your-uberllm-key"
+    // let martllmService = AIProxy.martllmDirectService(
+    //     unprotectedAPIKey: "your-martllm-key"
     // )
 
     /* Uncomment for all other production use cases */
-    // let uberllmService = AIProxy.uberllmService(
+    // let martllmService = AIProxy.martllmService(
     //     partialKey: "partial-key-from-your-developer-dashboard",
     //     serviceURL: "service-url-from-your-developer-dashboard"
     // )
@@ -7377,7 +7377,7 @@ dashboard, use `https://api.uberllm.dev` as the proxy base URL.
     )
 
     do {
-        let response = try await uberllmService.chatCompletionRequest(body: requestBody)
+        let response = try await martllmService.chatCompletionRequest(body: requestBody)
         print(response.choices.first?.message.content ?? "")
         if let usage = response.usage {
             print("Used \(usage.totalTokens ?? 0) total tokens")
@@ -7385,22 +7385,22 @@ dashboard, use `https://api.uberllm.dev` as the proxy base URL.
     } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
         print("Received non-200 status code: \(statusCode) with response body: \(responseBody)")
     } catch {
-        print("Could not get UberLLM chat completion: \(error)")
+        print("Could not get MartLLM chat completion: \(error)")
     }
 ```
 
-### How to make a streaming chat completion with UberLLM
+### How to make a streaming chat completion with MartLLM
 
 ```swift
     import AIProxy
 
     /* Uncomment for BYOK use cases */
-    // let uberllmService = AIProxy.uberllmDirectService(
-    //     unprotectedAPIKey: "your-uberllm-key"
+    // let martllmService = AIProxy.martllmDirectService(
+    //     unprotectedAPIKey: "your-martllm-key"
     // )
 
     /* Uncomment for all other production use cases */
-    // let uberllmService = AIProxy.uberllmService(
+    // let martllmService = AIProxy.martllmService(
     //     partialKey: "partial-key-from-your-developer-dashboard",
     //     serviceURL: "service-url-from-your-developer-dashboard"
     // )
@@ -7414,7 +7414,7 @@ dashboard, use `https://api.uberllm.dev` as the proxy base URL.
     )
 
     do {
-        let stream = try await uberllmService.streamingChatCompletionRequest(body: requestBody)
+        let stream = try await martllmService.streamingChatCompletionRequest(body: requestBody)
         for try await chunk in stream {
             print(chunk.choices.first?.delta.content ?? "")
             if let usage = chunk.usage {
@@ -7424,7 +7424,7 @@ dashboard, use `https://api.uberllm.dev` as the proxy base URL.
     } catch AIProxyError.unsuccessfulRequest(let statusCode, let responseBody) {
         print("Received non-200 status code: \(statusCode) with response body: \(responseBody)")
     } catch {
-        print("Could not make streaming UberLLM request: \(error)")
+        print("Could not make streaming MartLLM request: \(error)")
     }
 ```
 

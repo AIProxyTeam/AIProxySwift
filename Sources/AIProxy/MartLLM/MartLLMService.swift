@@ -1,5 +1,5 @@
 //
-//  UberLLMService.swift
+//  MartLLMService.swift
 //  AIProxy
 //
 //  Created by PSA-Team-source on 11/10/26.
@@ -7,13 +7,13 @@
 
 import Foundation
 
-@AIProxyActor public protocol UberLLMService: Sendable {
+@AIProxyActor public protocol MartLLMService: Sendable {
 
     /// Initiates a non-streaming chat completion request to /v1/chat/completions.
     ///
     /// - Parameters:
-    ///   - body: The request body to send to UberLLM. UberLLM's API is OpenAI compatible. See this reference:
-    ///           https://uberllm.dev/docs
+    ///   - body: The request body to send to MartLLM. MartLLM's API is OpenAI compatible. See this reference:
+    ///           https://martllm.com/docs
     ///   - secondsToWait: The amount of time to wait before `URLError.timedOut` is raised
     /// - Returns: The chat response. See this reference:
     ///            https://platform.openai.com/docs/api-reference/chat/object
@@ -25,8 +25,8 @@ import Foundation
     /// Initiates a streaming chat completion request to /v1/chat/completions.
     ///
     /// - Parameters:
-    ///   - body: The request body to send to UberLLM. UberLLM's API is OpenAI compatible. See this reference:
-    ///           https://uberllm.dev/docs
+    ///   - body: The request body to send to MartLLM. MartLLM's API is OpenAI compatible. See this reference:
+    ///           https://martllm.com/docs
     ///   - secondsToWait: The amount of time to wait before `URLError.timedOut` is raised
     /// - Returns: An async sequence of completion chunks. See this reference:
     ///            https://platform.openai.com/docs/api-reference/chat/streaming
@@ -36,7 +36,7 @@ import Foundation
     ) async throws -> AsyncThrowingStream<OpenAIChatCompletionChunk, Error>
 }
 
-extension UberLLMService {
+extension MartLLMService {
     public func chatCompletionRequest(
         body: OpenAIChatCompletionRequestBody
     ) async throws -> OpenAIChatCompletionResponseBody {
