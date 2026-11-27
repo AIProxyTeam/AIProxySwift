@@ -120,35 +120,42 @@ nonisolated public enum OpenAIRealtimeMessage: Decodable, Sendable {
 }
 
 public struct OpenAIRealtimeErrorEvent: Decodable, Sendable {
-    public let errorBody: String?
+    public let error: ErrorBody?
 
-    private struct ErrorObject: Decodable {
-        let message: String?
-        let type: String?
-        let code: String?
+    /// The ID of the server error event.
+    public let eventID: String?
+
+    public struct ErrorBody: Decodable, Sendable {
+        public let code: String?
+        public let message: String?
+        public let param: String?
+        public let type: String?
+
+        /// The ID of the client event that caused the error, if supplied.
+        public let eventID: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case code
+            case message
+            case param
+            case type
+            case eventID = "event_id"
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
         case error
+        case eventID = "event_id"
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.eventID = try container.decodeIfPresent(String.self, forKey: .eventID)
         if let errorString = try? container.decode(String.self, forKey: .error) {
-            self.errorBody = errorString
-            return
+            self.error = ErrorBody(code: nil, message: errorString, param: nil, type: nil, eventID: nil)
+        } else {
+            self.error = try container.decodeIfPresent(ErrorBody.self, forKey: .error)
         }
-        if let errorObject = try container.decodeIfPresent(ErrorObject.self, forKey: .error) {
-            if let message = errorObject.message {
-                self.errorBody = message
-            } else if let type = errorObject.type, let code = errorObject.code {
-                self.errorBody = "\(type): \(code)"
-            } else {
-                self.errorBody = errorObject.type ?? errorObject.code
-            }
-            return
-        }
-        self.errorBody = nil
     }
 }
 
@@ -483,14 +490,28 @@ public struct OpenAIRealtimeResponseDoneEvent: Decodable, Sendable {
     public let conversationID: String?
     public let status: String?
     public let output: [OpenAIRealtimeResponseOutputItem]?
+    public let statusDetails: StatusDetails?
     public let usage: OpenAIRealtimeResponseUsage?
     public let eventID: String?
+
+    public struct StatusDetails: Decodable, Sendable {
+        public let type: String?
+        public let reason: String?
+        public let error: ErrorBody?
+
+        public struct ErrorBody: Decodable, Sendable {
+            public let code: String?
+            public let message: String?
+            public let type: String?
+        }
+    }
 
     private struct ResponseBody: Decodable {
         let id: String?
         let conversationID: String?
         let status: String?
         let output: [OpenAIRealtimeResponseOutputItem]?
+        let statusDetails: StatusDetails?
         let usage: OpenAIRealtimeResponseUsage?
 
         private enum CodingKeys: String, CodingKey {
@@ -498,7 +519,19 @@ public struct OpenAIRealtimeResponseDoneEvent: Decodable, Sendable {
             case conversationID = "conversation_id"
             case status
             case output
+            case statusDetails = "status_details"
             case usage
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decodeIfPresent(String.self, forKey: .id)
+            conversationID = try container.decodeIfPresent(String.self, forKey: .conversationID)
+            status = try container.decodeIfPresent(String.self, forKey: .status)
+            output = try container.decodeIfPresent([OpenAIRealtimeResponseOutputItem].self, forKey: .output)
+            usage = try container.decodeIfPresent(OpenAIRealtimeResponseUsage.self, forKey: .usage)
+            // An unexpected diagnostic shape must not discard the response or stop receiving.
+            statusDetails = try? container.decodeIfPresent(StatusDetails.self, forKey: .statusDetails)
         }
     }
 
@@ -516,6 +549,7 @@ public struct OpenAIRealtimeResponseDoneEvent: Decodable, Sendable {
         self.conversationID = response?.conversationID
         self.status = response?.status
         self.output = response?.output
+        self.statusDetails = response?.statusDetails
         self.usage = response?.usage
         self.eventID = try container.decodeIfPresent(String.self, forKey: .eventID)
     }
