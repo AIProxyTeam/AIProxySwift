@@ -288,11 +288,13 @@ public struct OpenAIRealtimeConversationItemCreatedEvent: Decodable, Sendable {
     public let itemID: String?
     public let previousItemID: String?
     public let role: String?
+    public let phase: OpenAIRealtimeResponsePhase?
     public let eventID: String?
 
     private struct ItemBody: Decodable {
         let id: String?
         let role: String?
+        let phase: OpenAIRealtimeResponsePhase?
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -309,6 +311,7 @@ public struct OpenAIRealtimeConversationItemCreatedEvent: Decodable, Sendable {
         self.itemID = item?.id ?? fallbackItemID
         self.previousItemID = try container.decodeIfPresent(String.self, forKey: .previousItemID)
         self.role = item?.role
+        self.phase = item?.phase
         self.eventID = try container.decodeIfPresent(String.self, forKey: .eventID)
     }
 }
@@ -332,10 +335,12 @@ public struct OpenAIRealtimeResponseOutputItemAddedEvent: Decodable, Sendable {
     public let responseID: String?
     public let itemID: String?
     public let outputIndex: Int?
+    public let phase: OpenAIRealtimeResponsePhase?
     public let eventID: String?
 
     private struct ItemBody: Decodable {
         let id: String?
+        let phase: OpenAIRealtimeResponsePhase?
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -353,6 +358,7 @@ public struct OpenAIRealtimeResponseOutputItemAddedEvent: Decodable, Sendable {
         let fallbackItemID = try container.decodeIfPresent(String.self, forKey: .itemID)
         self.itemID = item?.id ?? fallbackItemID
         self.outputIndex = container.decodeFlexibleIntIfPresent(forKey: .outputIndex)
+        self.phase = item?.phase
         self.eventID = try container.decodeIfPresent(String.self, forKey: .eventID)
     }
 }
@@ -361,6 +367,7 @@ public struct OpenAIRealtimeResponseOutputItemDoneEvent: Decodable, Sendable {
     public let responseID: String?
     public let itemID: String?
     public let outputIndex: Int?
+    public let phase: OpenAIRealtimeResponsePhase?
     public let transcript: String?
     public let eventID: String?
 
@@ -369,6 +376,7 @@ public struct OpenAIRealtimeResponseOutputItemDoneEvent: Decodable, Sendable {
             let transcript: String?
         }
         let id: String?
+        let phase: OpenAIRealtimeResponsePhase?
         let content: [ContentBody]?
     }
 
@@ -387,6 +395,7 @@ public struct OpenAIRealtimeResponseOutputItemDoneEvent: Decodable, Sendable {
         let fallbackItemID = try container.decodeIfPresent(String.self, forKey: .itemID)
         self.itemID = item?.id ?? fallbackItemID
         self.outputIndex = container.decodeFlexibleIntIfPresent(forKey: .outputIndex)
+        self.phase = item?.phase
         self.transcript = item?.content?.first(where: { ($0.transcript?.isEmpty == false) })?.transcript
         self.eventID = try container.decodeIfPresent(String.self, forKey: .eventID)
     }
@@ -480,6 +489,7 @@ public struct OpenAIRealtimeResponseDoneEvent: Decodable, Sendable {
     public let responseID: String?
     public let conversationID: String?
     public let status: String?
+    public let output: [OpenAIRealtimeResponseOutputItem]?
     public let statusDetails: StatusDetails?
     public let usage: OpenAIRealtimeResponseUsage?
     public let eventID: String?
@@ -500,6 +510,7 @@ public struct OpenAIRealtimeResponseDoneEvent: Decodable, Sendable {
         let id: String?
         let conversationID: String?
         let status: String?
+        let output: [OpenAIRealtimeResponseOutputItem]?
         let statusDetails: StatusDetails?
         let usage: OpenAIRealtimeResponseUsage?
 
@@ -507,8 +518,20 @@ public struct OpenAIRealtimeResponseDoneEvent: Decodable, Sendable {
             case id
             case conversationID = "conversation_id"
             case status
+            case output
             case statusDetails = "status_details"
             case usage
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decodeIfPresent(String.self, forKey: .id)
+            conversationID = try container.decodeIfPresent(String.self, forKey: .conversationID)
+            status = try container.decodeIfPresent(String.self, forKey: .status)
+            output = try container.decodeIfPresent([OpenAIRealtimeResponseOutputItem].self, forKey: .output)
+            usage = try container.decodeIfPresent(OpenAIRealtimeResponseUsage.self, forKey: .usage)
+            // An unexpected diagnostic shape must not discard the response or stop receiving.
+            statusDetails = try? container.decodeIfPresent(StatusDetails.self, forKey: .statusDetails)
         }
     }
 
@@ -525,6 +548,7 @@ public struct OpenAIRealtimeResponseDoneEvent: Decodable, Sendable {
         self.responseID = response?.id ?? fallbackResponseID
         self.conversationID = response?.conversationID
         self.status = response?.status
+        self.output = response?.output
         self.statusDetails = response?.statusDetails
         self.usage = response?.usage
         self.eventID = try container.decodeIfPresent(String.self, forKey: .eventID)

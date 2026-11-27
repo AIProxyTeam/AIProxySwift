@@ -1308,6 +1308,14 @@ client event ID in `error.eventID`; the outer `eventID` identifies the server ev
 Read these fields instead of the previous `errorBody` property. A provider error
 does not stop reception on an open connection. Check `responseDone.status` and
 `statusDetails` to distinguish completed, cancelled, incomplete, and failed responses.
+If the server sends an unexpected `status_details` shape, `statusDetails` is `nil`
+and the response is still delivered.
+
+Start reading the receiver as soon as `realtimeSession(...)` returns. Wait for
+`.sessionUpdated` (the server's `session.updated` event) before sending audio or
+creating the first response. Returning from the factory does not confirm that
+the server has applied the initial configuration.
+
 The receiver is created before the connection starts; consume it promptly because
 events are buffered without a fixed limit until the receiving task processes them.
 Cancelling while awaiting the next event closes the session. Put
@@ -1318,7 +1326,6 @@ The SDK leaves retries and reconnection to the caller.
 OpenAI Realtime uses Network.framework WebSockets for connection state, close frames,
 and automatic pong replies. `realtimeSession` returns after starting the connection.
 Its `receiver` reports handshake failures and the 60-second connection setup timeout.
-Wait for `.sessionUpdated` to confirm the provider accepted the initial configuration.
 
 On Apple Watch, WebSockets require an eligible use case, such as an audio streaming
 app actively streaming audio or a VoIP app in a CallKit call. Test on a physical
@@ -1434,14 +1441,11 @@ final class RealtimeManager {
             inputAudioFormat: .pcm16,
             inputAudioTranscription: .init(model: "whisper-1"),
             instructions: "You are a tour guide of Yosemite national park",
-            maxResponseOutputTokens: .int(4096),
-            modalities: [.audio],
+            maxOutputTokens: .int(4096),
+            outputModalities: [.audio],
             outputAudioFormat: .pcm16,
-            temperature: 0.7,
-            turnDetection: .init(
-                type: .semanticVAD(eagerness: .medium)
-            ),
-            voice: "shimmer"
+            turnDetection: .semanticVAD(.init(eagerness: .medium)),
+            voice: .builtin("shimmer")
         )
 
         let realtimeSession = try await openAIService.realtimeSession(
@@ -1518,14 +1522,15 @@ final class RealtimeManager {
 }
 ```
 
-#### General Availability (GA) Realtime migration notes
+#### Current Realtime API notes
 
-- OpenAI has announced Realtime beta (`OpenAI-Beta: realtime=v1`) deprecation and shutdown on 2026-05-07.
-- For `response.create`, GA uses `output_modalities` (not `modalities`).
-- The new `output_modalities` for OpenAI realtime GA (general availability) is as follows:
+- For a field-by-field mapping of the Realtime wire shape to AIProxySwift types, see
+  [Realtime schema matrix](Documentation/OpenAI/RealtimeSchemaMatrix.md).
+- For `response.create`, the current Realtime API uses `output_modalities` (not `modalities`).
+- `output_modalities` is as follows:
   - `["audio"]` returns audio with transcript.
   - `["text"]` returns text only.
-- For voice mode with built-in web search, use GA tool (`.webSearch`) and specify `.auto` for toolChoice to let the model decide when to use it.
+- For voice mode with built-in web search, use the `.webSearch` tool and specify `.auto` for `toolChoice` to let the model decide when to use it.
 
 ```swift
 let configuration = OpenAIRealtimeSessionConfiguration(
@@ -1540,6 +1545,57 @@ let session = try await openAIService.realtimeSession(
     configuration: configuration,
     logLevel: .info
 )
+```
+
+#### Realtime Reasoning models
+
+OpenAI's Realtime Reasoning models, such as `gpt-realtime-2`, use the same Realtime WebSocket
+transport and shared session fields as Performance models like `gpt-realtime-1.5`, plus
+Reasoning-only configuration for effort and parallel tool calls.
+Omit `reasoning` to leave the effort unspecified.
+
+```swift
+let configuration = OpenAIRealtimeSessionConfiguration(
+    outputModalities: [.audio],
+    tools: [.webSearch(.init(searchContextSize: .medium))],
+    toolChoice: .auto,
+    voice: .builtin("alloy"),
+    reasoning: .low,
+    parallelToolCalls: true
+)
+
+let session = try await openAIService.realtimeSession(
+    model: "gpt-realtime-2",
+    configuration: configuration,
+    logLevel: .info
+)
+```
+
+After receiving `.sessionUpdated`, you can override Reasoning settings for a single response:
+
+```swift
+try await session.sendMessage(
+    OpenAIRealtimeResponseCreate(
+        response: .init(
+            instructions: "Use the lowest sufficient reasoning effort.",
+            outputModalities: [.audio],
+            reasoning: .minimal,
+            parallelToolCalls: false
+        )
+    )
+)
+```
+
+Realtime Reasoning responses can include phased output. Use `phase` to separate short commentary
+from the final answer when the model emits both in a turn:
+
+```swift
+for try await message in session.receiver {
+    if case .responseDone(let event) = message {
+        let commentary = event.output?.filter { $0.phase == .commentary }
+        let finalAnswer = event.output?.filter { $0.phase == .finalAnswer }
+    }
+}
 ```
 
 ### How to make a basic request using OpenAI's Responses API

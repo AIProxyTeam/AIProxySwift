@@ -84,6 +84,23 @@ struct OpenAIRealtimeSessionFailureTests {
     #endif
 
     @Test
+    func initialSessionUpdateSendsReasoningConfiguration() async throws {
+        let fixture = RealtimeScriptedTransport()
+        let session = fixture.makeSession(configuration: .init(reasoning: .low, parallelToolCalls: true))
+        defer { session.disconnect() }
+        try await fixture.waitForSend(1)
+
+        let firstMessage = try #require(fixture.sent.first)
+        let json = try JSONSerialization.jsonObject(with: firstMessage)
+        let event = try #require(json as? [String: Any])
+        #expect(event["type"] as? String == "session.update")
+        let configuration = try #require(event["session"] as? [String: Any])
+        let reasoning = try #require(configuration["reasoning"] as? [String: Any])
+        #expect(reasoning["effort"] as? String == "low")
+        #expect(configuration["parallel_tool_calls"] as? Bool == true)
+    }
+
+    @Test
     func providerErrorsBeforeReceiverAccessAreDeliveredInOrder() async throws {
         let fixture = RealtimeScriptedTransport()
         let session = fixture.makeSession()
@@ -589,7 +606,7 @@ private final class RealtimeScriptedTransport {
     private var receiveSignals: [Int: RealtimeTestSignal<Void>] = [:]
     private var sendSignals: [Int: RealtimeTestSignal<Void>] = [:]
 
-    func makeSession() -> OpenAIRealtimeSession {
+    func makeSession(configuration: OpenAIRealtimeSessionConfiguration = .init()) -> OpenAIRealtimeSession {
         let transport = OpenAIRealtimeTransport(
             send: { [self] message, completion in
                 sent.append(message)
@@ -619,7 +636,7 @@ private final class RealtimeScriptedTransport {
                 cancelled.succeed(())
             }
         )
-        let session = OpenAIRealtimeSession(transport: transport, sessionConfiguration: .init())
+        let session = OpenAIRealtimeSession(transport: transport, sessionConfiguration: configuration)
         session.start()
         return session
     }
