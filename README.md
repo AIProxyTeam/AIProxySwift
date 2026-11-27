@@ -1301,6 +1301,56 @@ We recommend getting a basic chat completion with OpenAI working before attempti
 Realtime is a more involved integration (as you can see from the code snippet below), and
 getting a basic integration working first narrows down the source of any problem.
 
+**Breaking change:** Realtime sends throw, and `receiver` is an `AsyncThrowingStream`. Use `try await`
+for sends and `for try await` inside `do`/`catch` for reception. Provider `.error`
+events expose `error.code`, `error.type`, `error.message`, `error.param`, and the
+client event ID in `error.eventID`; the outer `eventID` identifies the server event.
+Read these fields instead of the previous `errorBody` property. A provider error
+does not stop reception on an open connection. Check `responseDone.status` and
+`statusDetails` to distinguish completed, cancelled, incomplete, and failed responses.
+If the server sends an unexpected `status_details` shape, `statusDetails` is `nil`
+and the response is still delivered.
+
+Start reading the receiver as soon as `realtimeSession(...)` returns. Wait for
+`.sessionUpdated` (the server's `session.updated` event) before sending audio or
+creating the first response. Returning from the factory does not confirm that
+the server has applied the initial configuration.
+
+The receiver is created before the connection starts; consume it promptly because
+events are buffered without a fixed limit until the receiving task processes them.
+Cancelling while awaiting the next event closes the session. Put
+`defer { session.disconnect() }` in the receiving task to also close it when
+cancellation interrupts event handling or the task returns early.
+The SDK leaves retries and reconnection to the caller.
+
+OpenAI Realtime uses Network.framework WebSockets for connection state, close frames,
+and automatic pong replies. `realtimeSession` returns after starting the connection.
+Its `receiver` reports handshake failures and the 60-second connection setup timeout.
+
+On Apple Watch, WebSockets require an eligible use case, such as an audio streaming
+app actively streaming audio or a VoIP app in a CallKit call. Test on a physical
+watch because the simulator always permits low-level networking. [Apple’s watchOS networking guidance](https://developer.apple.com/documentation/technotes/tn3135-low-level-networking-on-watchos).
+
+For custom endpoints, use the final WebSocket address. The upgrade uses the SDK’s
+request headers. It does not follow HTTP redirects or share the REST session’s
+cookies. Use an `https` or `wss` service URL supporting
+TLS 1.2 or later and the ATS cipher suite group. Realtime negotiates TLS 1.3
+with compatible servers. Setting `NSExceptionMinimumTLSVersion` to `TLSv1.3` for
+a matching destination in the app’s `NSExceptionDomains` requires TLS 1.3 on
+both direct and proxied connections.
+
+Both routes require system TLS trust. Proxied connections also require the
+server’s leaf public key to match one of the SDK’s pins. For local testing,
+direct connections also accept `http` and `ws` on `127.0.0.1` and `::1`.
+Network.framework operates outside App Transport Security (ATS). Apps that require
+additional ATS restrictions, such as domain-specific certificate pins, must account
+for that when adopting native Realtime. [Apple’s ATS guidance](https://developer.apple.com/documentation/security/preventing-insecure-network-connections).
+
+An abnormal close throws `OpenAIRealtimeSessionError.closed` with the close code,
+raw reason, and any underlying transport error. Other transport, serialization,
+and decoding failures retain their original errors. A failed handshake can surface
+an `NWError`. The receiver does not expose the HTTP upgrade response body.
+
 Take these steps to build and run an OpenAI realtime example: 
 
 1. Generate a new SwiftUI Xcode project
@@ -1407,36 +1457,55 @@ final class RealtimeManager {
         // Send audio from the microphone to OpenAI once OpenAI is ready for it:
         var isOpenAIReadyForAudio = false
         Task {
-            for await buffer in micStream {
-                if isOpenAIReadyForAudio, let base64Audio = AIProxy.base64EncodeAudioPCMBuffer(from: buffer) {
-                    await realtimeSession.sendMessage(
-                        OpenAIRealtimeInputAudioBufferAppend(audio: base64Audio)
-                    )
+            do {
+                for await buffer in micStream {
+                    if isOpenAIReadyForAudio, let base64Audio = AIProxy.base64EncodeAudioPCMBuffer(from: buffer) {
+                        try await realtimeSession.sendMessage(
+                            OpenAIRealtimeInputAudioBufferAppend(audio: base64Audio)
+                        )
+                    }
                 }
+            } catch {
+                print("Realtime send failed: \(error)")
+                realtimeSession.disconnect()
+                audioController.stop()
             }
         }
 
         // Listen for messages from OpenAI:
         Task {
-            for await message in realtimeSession.receiver {
-                switch message {
-                case .error(_):
-                    realtimeSession.disconnect()
-                case .sessionUpdated:
-                    if aiSpeaksFirst {
-                        await realtimeSession.sendMessage(OpenAIRealtimeResponseCreate())
-                    } else {
+            defer {
+                realtimeSession.disconnect()
+                audioController.stop()
+            }
+            do {
+                for try await message in realtimeSession.receiver {
+                    switch message {
+                    case .error(let event):
+                        print("Realtime command failed: \(event.error?.message ?? "Unknown error")")
+                    case .sessionUpdated:
+                        if aiSpeaksFirst {
+                            try await realtimeSession.sendMessage(OpenAIRealtimeResponseCreate())
+                        } else {
+                            isOpenAIReadyForAudio = true
+                        }
+                    case .responseDone(let response):
+                        if let status = response.status, status != "completed" {
+                            let reason = response.statusDetails?.reason ?? response.statusDetails?.error?.code
+                            print("Realtime response \(status): \(reason ?? "No details supplied")")
+                        }
+                    case .responseAudioDelta(let delta):
+                        audioController.playPCM16Audio(base64String: delta.base64Audio)
+                    case .inputAudioBufferSpeechStarted:
+                        audioController.interruptPlayback()
+                    case .responseCreated:
                         isOpenAIReadyForAudio = true
+                    default:
+                        break
                     }
-                case .responseAudioDelta(let delta):
-                    audioController.playPCM16Audio(base64String: delta.base64String)
-                case .inputAudioBufferSpeechStarted:
-                    audioController.interruptPlayback()
-                case .responseCreated:
-                    isOpenAIReadyForAudio = true
-                default:
-                    break
                 }
+            } catch {
+                print("Realtime session failed: \(error)")
             }
         }
 
@@ -1502,10 +1571,10 @@ let session = try await openAIService.realtimeSession(
 )
 ```
 
-You can also override Reasoning settings for a single response:
+After receiving `.sessionUpdated`, you can override Reasoning settings for a single response:
 
 ```swift
-await session.sendMessage(
+try await session.sendMessage(
     OpenAIRealtimeResponseCreate(
         response: .init(
             instructions: "Use the lowest sufficient reasoning effort.",
@@ -1521,7 +1590,7 @@ Realtime Reasoning responses can include phased output. Use `phase` to separate 
 from the final answer when the model emits both in a turn:
 
 ```swift
-for await message in session.receiver {
+for try await message in session.receiver {
     if case .responseDone(let event) = message {
         let commentary = event.output?.filter { $0.phase == .commentary }
         let finalAnswer = event.output?.filter { $0.phase == .finalAnswer }
@@ -7586,7 +7655,7 @@ In such a case, you can pop UI to the end user by catching AIProxyError.deviceCh
 
 ### How to catch Foundation errors for specific conditions
 
-We use Foundation's `URL` types such as `URLRequest` and `URLSession` for all connections to
+The SDK uses Foundation's `URLRequest` and `URLSession` for HTTP connections to
 AIProxy. You can view the various errors that Foundation may raise by viewing NSURLError.h
 (which is easiest to find by punching `cmd-shift-o` in Xcode and searching for it).
 
